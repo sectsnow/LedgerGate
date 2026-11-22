@@ -1,0 +1,27 @@
+name: ledgergate
+
+services:
+  ledgergate:
+    image: "${LEDGERGATE_IMAGE:-ledgergate:local}"
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${LEDGERGATE_PORT:-8081}:8080"
+    volumes:
+      - data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  data:

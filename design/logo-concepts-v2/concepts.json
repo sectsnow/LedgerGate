@@ -1,0 +1,102 @@
+[
+  {
+    "id": "11",
+    "slug": "signature",
+    "name": "手写签名",
+    "idea": "自由笔画 · 有个人作品的温度",
+    "color": "#CC8B67",
+    "ink": "#364542",
+    "dark": "#E6B296",
+    "dark_ink": "#E6EEE6"
+  },
+  {
+    "id": "12",
+    "slug": "chinese-seal",
+    "name": "中式方印",
+    "idea": "门与账的篆刻构图 · 温润朱砂红",
+    "color": "#B75C4B",
+    "ink": "#B75C4B",
+    "dark": "#F0AA98",
+    "dark_ink": "#F0AA98"
+  },
+  {
+    "id": "13",
+    "slug": "pixel-terminal",
+    "name": "像素终端",
+    "idea": "8-bit 字母块 · 复古开发者气质",
+    "color": "#35B66C",
+    "ink": "#236A45",
+    "dark": "#B3ED9A",
+    "dark_ink": "#65C28B"
+  },
+  {
+    "id": "14",
+    "slug": "wireframe",
+    "name": "极简线框",
+    "idea": "细线 LG 与接口括号 · 轻巧克制",
+    "color": "#419DB0",
+    "ink": "#345B68",
+    "dark": "#83D3DD",
+    "dark_ink": "#CADFE7"
+  },
+  {
+    "id": "15",
+    "slug": "gateway-badge",
+    "name": "网关徽章",
+    "idea": "盾形章徽 · 稳定、守护与秩序",
+    "color": "#C69C4A",
+    "ink": "#30465F",
+    "dark": "#E9C574",
+    "dark_ink": "#DAE2EC"
+  },
+  {
+    "id": "16",
+    "slug": "soft-bloom",
+    "name": "柔和花瓣",
+    "idea": "有机曲线汇聚 · 轻盈、亲和",
+    "color": "#9B89D8",
+    "ink": "#E1877C",
+    "dark": "#CCBCEB",
+    "dark_ink": "#F3B6A7"
+  },
+  {
+    "id": "17",
+    "slug": "vintage-ticket",
+    "name": "复古票据",
+    "idea": "票据缺口与 LG 暗记 · 老派账房感",
+    "color": "#C29D6C",
+    "ink": "#765B45",
+    "dark": "#E1BC86",
+    "dark_ink": "#DDC6A8"
+  },
+  {
+    "id": "18",
+    "slug": "isometric-ledger",
+    "name": "立体纸片",
+    "idea": "等距视角与柔和渐变 · 桌面应用感",
+    "color": "#64C5D2",
+    "ink": "#6A5BDA",
+    "dark": "#91DDE5",
+    "dark_ink": "#C1B7F0"
+  },
+  {
+    "id": "19",
+    "slug": "ledger-cat",
+    "name": "账房猫",
+    "idea": "吉祥物路线 · 轻松、有记忆点",
+    "color": "#526B7D",
+    "ink": "#D69B62",
+    "dark": "#C8DBE5",
+    "dark_ink": "#E9BD8F"
+  },
+  {
+    "id": "20",
+    "slug": "stencil-wordmark",
+    "name": "纯字标",
+    "idea": "定制字母结构 · 品牌名直接成为标志",
+    "color": "#5B7399",
+    "ink": "#253243",
+    "dark": "#91B5EC",
+    "dark_ink": "#E0E8F3"
+  }
+]

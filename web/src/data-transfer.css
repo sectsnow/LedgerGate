@@ -1,0 +1,29 @@
+.data-transfer-panel { margin-bottom: 22px; }
+.transfer-tabs, .transfer-form, .transfer-feedback { margin: 0 24px 20px; }
+.transfer-tabs, .transfer-actions, .transfer-import-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.transfer-tabs button[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); border-color: var(--accent); }
+.transfer-form { display: grid; gap: 16px; }
+.transfer-fieldset { min-width: 0; border: 0; padding: 0; }
+.transfer-fieldset legend { margin-bottom: 10px; color: var(--text-muted); font-size: 12px; }
+.transfer-categories { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.transfer-category { display: flex; align-items: flex-start; gap: 10px; padding: 13px; border: 1px solid var(--border); border-radius: var(--radius-control); cursor: pointer; min-width: 0; }
+.transfer-category.chosen { background: var(--accent-soft); border-color: var(--accent-mid); }
+.transfer-category input { width: 15px; height: 15px; margin-top: 2px; flex-shrink: 0; accent-color: var(--accent); }
+.transfer-category > span:not(.transfer-count) { flex: 1; min-width: 0; }
+.transfer-category strong { font-size: 12px; font-weight: 500; }
+.transfer-category small { display: block; margin-top: 4px; color: var(--text-muted); font-size: 10px; line-height: 1.7; }
+.transfer-count { font-size: 10px; white-space: nowrap; color: var(--text-muted); }
+.transfer-hint { color: var(--text-muted); font-size: 11px; line-height: 1.8; }
+.transfer-actions { align-items: flex-end; }
+.transfer-actions .field { flex: 1 1 220px; }
+.transfer-actions button, .transfer-import-actions button { font-size: 12px; }
+.transfer-dropzone { padding: 18px; border: 1px dashed var(--border-strong); border-radius: var(--radius-control); background: var(--surface-alt); }
+.transfer-dropzone label { display: block; font-size: 12px; margin-bottom: 10px; }
+.transfer-dropzone p { margin-top: 8px; overflow-wrap: anywhere; font-size: 11px; color: var(--text-muted); }
+.transfer-dropzone input { font-size: 12px; }
+.transfer-preview { min-width: 0; }
+.transfer-preview h3 { margin-bottom: 10px; }
+.transfer-preview .transfer-hint { margin-top: 8px; }
+.transfer-feedback { font-size: 12px; color: var(--text-muted); line-height: 1.8; }
+.transfer-feedback.form-error { color: var(--warning); }
+@media (max-width: 580px) { .transfer-tabs, .transfer-form, .transfer-feedback { margin-left: 15px; margin-right: 15px; } .transfer-categories { grid-template-columns: minmax(0, 1fr); } .transfer-category { padding: 11px; } }

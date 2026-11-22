@@ -1,0 +1,9 @@
+/data/
+/bin/
+/web/node_modules/
+/web/dist/
+/web/static/app/
+/.env
+*.db*
+*.log
+__pycache__/

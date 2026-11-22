@@ -1,0 +1,301 @@
+package app
+
+import (
+	"bufio"
+	"encoding/json"
+	"log/slog"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+)
+
+const requestBodyLimit = 256 << 10
+
+type requestAttempt struct {
+	ChannelID   uint      `json:"channel_id"`
+	ChannelName string    `json:"channel_name"`
+	Model       string    `json:"model"`
+	Protocol    string    `json:"protocol"`
+	StartedAt   time.Time `json:"started_at"`
+	DurationMS  int64     `json:"duration_ms"`
+	Status      int       `json:"status"`
+	Error       string    `json:"error"`
+}
+
+type requestPayload struct {
+	Available         bool             `json:"available"`
+	RequestBody       string           `json:"request_body"`
+	ResponseBody      string           `json:"response_body"`
+	RequestTruncated  bool             `json:"request_truncated"`
+	ResponseTruncated bool             `json:"response_truncated"`
+	Attempts          []requestAttempt `json:"attempts"`
+}
+
+type requestTrace struct {
+	mu                sync.Mutex
+	log               RequestLog
+	requestBody       string
+	requestTruncated  bool
+	response          []byte
+	responseTruncated bool
+	attempts          []requestAttempt
+}
+
+func activeRequest(state string) bool { return state == "running" || state == "streaming" }
+
+func requestState(log RequestLog) string {
+	if log.State != "" {
+		return log.State
+	}
+	if log.Status == 499 {
+		return "cancelled"
+	}
+	if log.Status >= 400 {
+		return "failed"
+	}
+	return "completed"
+}
+
+func (a *App) beginRequestTrace(log *RequestLog) *requestTrace {
+	initial := *log
+	initial.State, initial.Status = "running", 0
+	if err := a.DB.Create(&initial).Error; err != nil {
+		slog.Error("请求开始记录失败", "request_id", log.RequestID, "error", err)
+	}
+	log.ID, log.CreatedAt = initial.ID, initial.CreatedAt
+	t := &requestTrace{log: initial, attempts: []requestAttempt{}}
+	if initial.ID != 0 {
+		a.mu.Lock()
+		if a.activeRequests == nil {
+			a.activeRequests = map[uint]*requestTrace{}
+		}
+		a.activeRequests[initial.ID] = t
+		a.mu.Unlock()
+	}
+	return t
+}
+
+func (t *requestTrace) setRequest(log RequestLog, body object) {
+	text, truncated := boundedLogJSON(body)
+	t.mu.Lock()
+	t.log.Model, t.log.Stream = log.Model, log.Stream
+	t.requestBody, t.requestTruncated = text, truncated
+	t.mu.Unlock()
+}
+
+func (a *App) traceAttempt(t *requestTrace, log RequestLog) {
+	t.mu.Lock()
+	firstByte := t.log.FirstByteMS
+	t.log = log
+	t.log.State, t.log.Status, t.log.Error, t.log.FirstByteMS = "running", 0, "", firstByte
+	t.attempts = append(t.attempts, requestAttempt{ChannelID: log.ChannelID, ChannelName: log.ChannelName, Model: log.UpstreamModel, Protocol: log.UpstreamProtocol, StartedAt: time.Now()})
+	t.mu.Unlock()
+	if log.ID != 0 {
+		if err := a.DB.Model(&RequestLog{}).Where("id = ?", log.ID).Updates(map[string]any{
+			"model": log.Model, "stream": log.Stream, "channel_id": log.ChannelID, "channel_name": log.ChannelName,
+			"upstream_model": log.UpstreamModel, "upstream_protocol": log.UpstreamProtocol, "attempts": log.Attempts,
+		}).Error; err != nil {
+			slog.Error("请求路由记录失败", "request_id", log.RequestID, "error", err)
+		}
+	}
+}
+
+func (t *requestTrace) endAttempt(status int, message string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if len(t.attempts) == 0 {
+		return
+	}
+	last := &t.attempts[len(t.attempts)-1]
+	if last.Status != 0 {
+		return
+	}
+	last.Status, last.Error, last.DurationMS = status, message, time.Since(last.StartedAt).Milliseconds()
+}
+
+func (t *requestTrace) usage(result completion) {
+	t.mu.Lock()
+	result.recordLogUsage(&t.log)
+	t.mu.Unlock()
+}
+
+func (t *requestTrace) appendResponse(data []byte) {
+	if len(data) == 0 {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.log.FirstByteMS == nil {
+		ms := time.Since(t.log.CreatedAt).Milliseconds()
+		t.log.FirstByteMS = &ms
+	}
+	if t.log.Stream {
+		t.log.State = "streaming"
+	}
+	remaining := requestBodyLimit - len(t.response)
+	if len(data) > remaining {
+		t.responseTruncated = true
+		data = data[:remaining]
+	}
+	t.response = append(t.response, data...)
+}
+
+func (t *requestTrace) summary() RequestLog {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	log := t.log
+	if activeRequest(log.State) {
+		log.DurationMS = time.Since(log.CreatedAt).Milliseconds()
+		if log.FirstTokenMS != nil {
+			log.GenerationMS = intPointer(max(log.DurationMS-*log.FirstTokenMS, 0))
+		}
+	}
+	return log
+}
+
+func (t *requestTrace) payload() requestPayload {
+	t.mu.Lock()
+	payload := requestPayload{Available: true, RequestBody: t.requestBody, RequestTruncated: t.requestTruncated, ResponseTruncated: t.responseTruncated, Attempts: append([]requestAttempt{}, t.attempts...)}
+	raw, stream := string(t.response), t.log.Stream
+	t.mu.Unlock()
+	payload.ResponseBody = safeResponseBody(raw, stream)
+	return payload
+}
+
+func (a *App) finishRequestTrace(t *requestTrace, log *RequestLog) {
+	now := time.Now()
+	log.DurationMS, log.FinishedAt = now.Sub(log.CreatedAt).Milliseconds(), &now
+	log.State = "completed"
+	if log.Status >= 400 {
+		log.State = "failed"
+	}
+	if log.Status == 499 {
+		log.State = "cancelled"
+	}
+	t.endAttempt(log.Status, log.Error)
+	t.mu.Lock()
+	log.FirstByteMS = t.log.FirstByteMS
+	t.log = *log
+	t.mu.Unlock()
+	payload := a.seal(jsonString(t.payload()))
+	originalID := log.ID
+	err := a.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(log).Error; err != nil {
+			return err
+		}
+		if err := debitKey(tx, log); err != nil {
+			return err
+		}
+		return tx.Create(&RequestDetail{RequestLogID: log.ID, Payload: payload}).Error
+	})
+	if err != nil {
+		slog.Error("请求详情保存失败", "request_id", log.RequestID, "error", err)
+		if originalID == 0 {
+			log.ID = 0
+		}
+		if fallback := a.DB.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Save(log).Error; err != nil {
+				return err
+			}
+			return debitKey(tx, log)
+		}); fallback != nil {
+			slog.Error("请求结果保存失败", "request_id", log.RequestID, "error", fallback)
+		}
+	}
+	a.mu.Lock()
+	delete(a.activeRequests, log.ID)
+	a.mu.Unlock()
+}
+
+type requestCaptureWriter struct {
+	gin.ResponseWriter
+	trace *requestTrace
+}
+
+func (w *requestCaptureWriter) Write(data []byte) (int, error) {
+	n, err := w.ResponseWriter.Write(data)
+	w.trace.appendResponse(data[:n])
+	return n, err
+}
+
+func (w *requestCaptureWriter) WriteString(data string) (int, error) {
+	n, err := w.ResponseWriter.WriteString(data)
+	w.trace.appendResponse([]byte(data[:n]))
+	return n, err
+}
+
+func redactLogValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		result := object{}
+		for key, value := range typed {
+			switch strings.ToLower(strings.ReplaceAll(key, "-", "_")) {
+			case "authorization", "x_api_key", "api_key", "access_token", "refresh_token", "password", "secret", "client_secret":
+				result[key] = "[已隐藏]"
+			default:
+				result[key] = redactLogValue(value)
+			}
+		}
+		return result
+	case []any:
+		result := make([]any, len(typed))
+		for i, value := range typed {
+			result[i] = redactLogValue(value)
+		}
+		return result
+	case string:
+		if strings.HasPrefix(typed, "data:") && strings.Contains(typed, ";base64,") {
+			return "[已省略 base64 数据]"
+		}
+	}
+	return value
+}
+
+func boundedLogJSON(value any) (string, bool) {
+	raw, err := json.MarshalIndent(redactLogValue(value), "", "  ")
+	if err != nil {
+		return "[内容无法记录]", false
+	}
+	truncated := len(raw) > requestBodyLimit
+	if truncated {
+		raw = raw[:requestBodyLimit]
+	}
+	return strings.ToValidUTF8(string(raw), "�"), truncated
+}
+
+func safeResponseBody(raw string, stream bool) string {
+	if raw == "" {
+		return ""
+	}
+	if !stream {
+		value, err := decodeJSON([]byte(raw))
+		if err != nil {
+			return "[响应内容未完整记录，无法显示 JSON 原文]"
+		}
+		text, _ := boundedLogJSON(value)
+		return text
+	}
+	var result strings.Builder
+	scanner := bufio.NewScanner(strings.NewReader(raw))
+	scanner.Buffer(make([]byte, 4096), requestBodyLimit+1)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "[DONE]" {
+			result.WriteString("data: [DONE]\n\n")
+			continue
+		}
+		value, err := decodeJSON([]byte(data))
+		if err != nil {
+			continue
+		}
+		result.WriteString("data: " + jsonString(redactLogValue(value)) + "\n\n")
+	}
+	return result.String()
+}

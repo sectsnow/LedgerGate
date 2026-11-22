@@ -1,0 +1,92 @@
+[
+  {
+    "id": "01",
+    "slug": "ledger-portal",
+    "name": "门账",
+    "idea": "门形入口 × 账本刻度",
+    "color": "#245DE8",
+    "ink": "#19345A",
+    "dark": "#7FA9FF"
+  },
+  {
+    "id": "02",
+    "slug": "woven-lg",
+    "name": "交织 LG",
+    "idea": "L 与 G 咬合，简洁的字母标记",
+    "color": "#437BFF",
+    "ink": "#172F52",
+    "dark": "#8DB0FF"
+  },
+  {
+    "id": "03",
+    "slug": "confluence",
+    "name": "汇流",
+    "idea": "多路上游，汇入同一出口",
+    "color": "#13AFA9",
+    "ink": "#285FDD",
+    "dark": "#55D9CE"
+  },
+  {
+    "id": "04",
+    "slug": "folded-ledger",
+    "name": "折页门",
+    "idea": "账本折页中留出一道门",
+    "color": "#65C9A3",
+    "ink": "#177A61",
+    "dark": "#9AE4C6"
+  },
+  {
+    "id": "05",
+    "slug": "ledger-ring",
+    "name": "账环",
+    "idea": "环形 G 与三道账目刻度",
+    "color": "#36A8D0",
+    "ink": "#3F5DD9",
+    "dark": "#73D5F0"
+  },
+  {
+    "id": "06",
+    "slug": "protocol-prism",
+    "name": "协议棱镜",
+    "idea": "多面接口，统一连接",
+    "color": "#24ACC5",
+    "ink": "#6552DA",
+    "dark": "#78E0ED"
+  },
+  {
+    "id": "07",
+    "slug": "ledger-bridge",
+    "name": "双页桥",
+    "idea": "展开的账本，也是连接两端的桥",
+    "color": "#27A99C",
+    "ink": "#234C7D",
+    "dark": "#78DBCE"
+  },
+  {
+    "id": "08",
+    "slug": "operations-beacon",
+    "name": "运维哨塔",
+    "idea": "监控信号与稳定守望",
+    "color": "#EDA247",
+    "ink": "#234166",
+    "dark": "#FFD08A"
+  },
+  {
+    "id": "09",
+    "slug": "continuous-flow",
+    "name": "回环",
+    "idea": "连续流转与自动故障切换",
+    "color": "#27B8AD",
+    "ink": "#117C8A",
+    "dark": "#7CE4D6"
+  },
+  {
+    "id": "10",
+    "slug": "ledger-layers",
+    "name": "层账",
+    "idea": "账户、账目与请求逐层归集",
+    "color": "#4280E7",
+    "ink": "#6653D7",
+    "dark": "#93BCFF"
+  }
+]

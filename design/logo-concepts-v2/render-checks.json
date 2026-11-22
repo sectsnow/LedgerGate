@@ -1,0 +1,118 @@
+{
+  "options": 10,
+  "themes": [
+    "light",
+    "dark"
+  ],
+  "png_size": 512,
+  "widths_checked": [
+    1600,
+    1024,
+    736,
+    390,
+    320
+  ],
+  "browser_errors": 0,
+  "transparency": [
+    {
+      "id": "11",
+      "theme": "light",
+      "visible_pixels": 67669
+    },
+    {
+      "id": "11",
+      "theme": "dark",
+      "visible_pixels": 67669
+    },
+    {
+      "id": "12",
+      "theme": "light",
+      "visible_pixels": 141417
+    },
+    {
+      "id": "12",
+      "theme": "dark",
+      "visible_pixels": 141417
+    },
+    {
+      "id": "13",
+      "theme": "light",
+      "visible_pixels": 79872
+    },
+    {
+      "id": "13",
+      "theme": "dark",
+      "visible_pixels": 79872
+    },
+    {
+      "id": "14",
+      "theme": "light",
+      "visible_pixels": 43606
+    },
+    {
+      "id": "14",
+      "theme": "dark",
+      "visible_pixels": 43606
+    },
+    {
+      "id": "15",
+      "theme": "light",
+      "visible_pixels": 70661
+    },
+    {
+      "id": "15",
+      "theme": "dark",
+      "visible_pixels": 70661
+    },
+    {
+      "id": "16",
+      "theme": "light",
+      "visible_pixels": 80813
+    },
+    {
+      "id": "16",
+      "theme": "dark",
+      "visible_pixels": 80813
+    },
+    {
+      "id": "17",
+      "theme": "light",
+      "visible_pixels": 104379
+    },
+    {
+      "id": "17",
+      "theme": "dark",
+      "visible_pixels": 104379
+    },
+    {
+      "id": "18",
+      "theme": "light",
+      "visible_pixels": 93916
+    },
+    {
+      "id": "18",
+      "theme": "dark",
+      "visible_pixels": 93916
+    },
+    {
+      "id": "19",
+      "theme": "light",
+      "visible_pixels": 105916
+    },
+    {
+      "id": "19",
+      "theme": "dark",
+      "visible_pixels": 105916
+    },
+    {
+      "id": "20",
+      "theme": "light",
+      "visible_pixels": 93991
+    },
+    {
+      "id": "20",
+      "theme": "dark",
+      "visible_pixels": 93991
+    }
+  ]
+}

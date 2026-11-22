@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" fill="none" role="img" aria-labelledby="logo-title">
+  <title id="logo-title">LedgerGate · 汇流</title>
+  <style>
+    .standalone-logo { --logo-primary: #285FDD; --logo-accent: #13AFA9; }
+    @media (prefers-color-scheme: dark) {
+      .standalone-logo { --logo-primary: #DCE8FB; --logo-accent: #55D9CE; }
+    }
+  </style>
+  <defs>
+    <g id="confluence">
+      <g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="11">
+        <path stroke="var(--logo-primary, #285FDD)" d="M12 20H27Q36 20 43 29L58 48H76" />
+        <path stroke="var(--logo-accent, #13AFA9)" d="M12 76H27Q36 76 43 67L58 48" />
+        <path stroke="var(--logo-primary, #285FDD)" d="M12 48H76" />
+      </g>
+      <path fill="var(--logo-primary, #285FDD)" d="M70 31 89 48 70 65Z" />
+    </g>
+  </defs>
+  <use class="standalone-logo" href="#confluence" />
+</svg>
