@@ -34,23 +34,19 @@ LEDGERGATE_PORT=18080 docker compose up -d
 
 工作流有两个入口：
 
-- 推送合法 SemVer 版本标签，例如 `v0.1.0`，生成 `0.1.0`、`latest` 和 `sha-完整提交SHA` 镜像标签。预发布标签如 `v0.1.0-rc.1` 生成对应版本和 SHA 标签，不更新 `latest`。
+- 推送合法 SemVer 版本标签，例如 `v0.1.1`，生成 `0.1.1`、`latest` 和 `sha-完整提交SHA` 镜像标签。预发布标签如 `v0.1.1-rc.1` 生成对应版本和 SHA 标签，不更新 `latest`。
 - 在 Actions 中手动运行“发布 GHCR 镜像”。选择 `main` 分支时只生成 `sha-完整提交SHA`，适合首次候选构建，不更新 `latest`。
 
-发布前先执行前端测试、类型检查与生产构建及 Go 全量测试，再构建 `linux/amd64` 镜像。使用独立的 `ledgergate-ci_data` 数据卷，在只读根文件系统和非 root 配置下检查健康状态、嵌入的前端资源、首次设置密码，以及强制重建容器后原密码仍可登录；通过后才上传镜像。此检查使用临时空数据，不调用真实上游，也不替代实际账户采集、转发和备份恢复验收。
+发布前先执行前端测试、类型检查与生产构建及 Go 全量测试，再构建 `linux/amd64` 镜像。在运行器的临时目录准备绑定目录，检查主进程 UID/GID 为 0、有效能力仅包含 `DAC_OVERRIDE` 和 `FOWNER`、健康状态、嵌入的前端资源和首次设置密码；停止后将数据所有者改为旧镜像使用的 UID/GID 10001，再强制重建，确认原密钥不变、原密码仍可登录，通过后才上传镜像。此检查使用临时空数据，不调用真实上游，也不替代实际账户采集、转发和备份恢复验收。
 
 上传使用内置 `GITHUB_TOKEN`，权限限定为读取源码和写入 Packages，无需添加发布用 PAT。第三方 Actions 固定到已核对的提交 SHA。镜像名称自动按仓库路径转为小写；当前仓库对应 `ghcr.io/sectsnow/ledgergate`。
 
-当前仓库为私有仓库，首次发布的 GHCR 包默认私有。部署机先使用有包访问权限及 `read:packages` 权限的 PAT（classic）登录；交互提示输入时粘贴令牌，不写入 Compose：
-
-```bash
-docker login ghcr.io --username sectsnow
-```
+LedgerGate 的 GHCR 镜像包已公开，拉取镜像无需登录；源码仓库保持私有，镜像包的可见性单独设置。
 
 在仓库根目录的 `.env` 文件中指定已发布的镜像，例如：
 
 ```dotenv
-LEDGERGATE_IMAGE=ghcr.io/sectsnow/ledgergate:0.1.0
+LEDGERGATE_IMAGE=ghcr.io/sectsnow/ledgergate:0.1.1
 ```
 
 然后拉取并运行，复用同一份 Compose 的端口、数据卷和安全配置：
@@ -66,15 +62,38 @@ docker compose ps
 
 ## 镜像和数据
 
-Dockerfile 使用三个阶段：Node 22 构建前端，Go 1.26 构建嵌入前端的静态程序，最终 Alpine 镜像仅保留程序、证书、时区和基础运行工具。程序使用 UID/GID `10001:10001`，数据目录权限为 `0700`。
+Dockerfile 使用三个阶段：Node 22 构建前端，Go 1.26 构建嵌入前端的静态程序，最终 Alpine 镜像保留程序、证书、时区和基础运行工具。镜像默认以容器内 root（UID/GID `0:0`）直接执行程序，镜像内 `/data` 的初始权限为 `0700`；绑定已有目录时保留其目录权限，程序负责创建缺失的目录和首次运行所需文件。已有目录不递归修改所有者，原有密钥、密码与数据库继续使用。
+
+从 `0.1.1` 起默认使用 root；`0.1.0` 以 UID/GID `10001:10001` 运行，继续使用旧版时可在 Compose 中设置 `user: "0:0"`。升级需重新拉取镜像并重建容器；显式指定非 root `user` 时，需要自行匹配挂载目录的读写权限。
 
 `.dockerignore` 默认排除所有文件，只允许构建需要的源码和公共资源；数据目录、私钥、环境变量文件、数据库与 `.lgb` / `.lgd` 备份再次明确排除。最终镜像只从后端构建阶段复制程序。
 
-Compose 的持久化卷为 `ledgergate_data`，挂载到 `/data`，保存完整数据库、WAL/SHM、`master.key`、`admin-password` 及后续运行数据。重建容器或普通 `docker compose down` 不会删除这个命名卷。新建命名卷会继承镜像中 `/data` 的属主及权限；已有卷或绑定目录需允许 UID/GID 10001 读写。
+Compose 的持久化卷为 `ledgergate_data`，挂载到 `/data`，保存完整数据库、WAL/SHM、`master.key`、`admin-password` 及后续运行数据。重建容器或普通 `docker compose down` 不会删除这个命名卷。新建命名卷会继承镜像中 `/data` 的属主及权限；默认 root 的镜像也可读写旧版 UID 10001 所有的数据及普通 NAS 本地绑定目录。
 
 `docker compose down -v` 会删除数据卷，不用于普通更新。切勿只备份 `.db` 而遗漏主密钥与密码文件，也不要让两个实例同时打开同一份数据。
 
-容器根文件系统只读，`/data` 和 `/tmp` 可写；每 30 秒检查一次 `/healthz`。Docker 的 `healthy` 只代表进程能够响应健康接口，上游采集、转发和通知仍需各自验收。日志默认保留 3 份、每份最多 10 MiB。
+容器根文件系统只读，`/data` 和 `/tmp` 可写。Compose 在 `cap_drop: ALL` 的基础上，只保留访问已有数据所需的 `DAC_OVERRIDE` 和 `FOWNER`，后者用于设置数据库文件权限。root 运行会放宽对挂载目录的访问，挂载范围应仅包含本项目的数据目录；只读挂载及启用 root squash 的远程文件系统仍需单独匹配存储权限。
+
+每 30 秒检查一次 `/healthz`。Docker 的 `healthy` 只代表进程能够响应健康接口，上游采集、转发和通知仍需各自验收。日志默认保留 3 份、每份最多 10 MiB。
+
+### NAS 目录挂载
+
+使用 `0.1.1` 或更新版本时，可在独立的 Compose 项目目录中使用以下配置；普通 NAS 本地目录可直接创建并使用，无需额外指定 root 用户：
+
+```yaml
+services:
+  ledgergate:
+    container_name: ledgergate
+    image: ghcr.io/sectsnow/ledgergate:latest
+    restart: unless-stopped
+    ports:
+      - "18080:8080"
+    volumes:
+      - "./data:/data"
+    stop_grace_period: 30s
+```
+
+`./data` 相对于 Compose 文件所在的项目目录。使用已发布的 `0.1.0` 时，在服务中补充 `user: "0:0"`。已有数据需先备份并停止旧实例，再启动新容器，不能让两个实例同时打开同一份数据库。不要删除原 `master.key` 来处理权限错误。
 
 ## 更新与备份
 

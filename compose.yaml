@@ -14,6 +14,9 @@ services:
       - /tmp:rw,noexec,nosuid,size=64m
     cap_drop:
       - ALL
+    cap_add:
+      - DAC_OVERRIDE
+      - FOWNER
     security_opt:
       - no-new-privileges:true
     stop_grace_period: 30s

@@ -48,7 +48,7 @@ docker compose config --quiet
 docker compose up -d --build
 ```
 
-默认访问 `http://服务器IP:8081`，与宿主机上使用 8080 的服务并行验收；全新数据卷通过网页首次设置管理员密码。数据保存到命名卷 `ledgergate_data`，不会打入镜像。镜像中的程序使用非 root 用户运行。
+默认访问 `http://服务器IP:8081`，与宿主机上使用 8080 的服务并行验收；全新数据卷通过网页首次设置管理员密码。数据保存到命名卷 `ledgergate_data`，不会打入镜像。从 `0.1.1` 起镜像默认以容器内 root 运行；`0.1.0` 使用 UID 10001，NAS 可通过 `user: "0:0"` 覆盖，详见 Docker 部署说明。
 
 仓库已提供 GitHub Actions 发布工作流：推送 `v*` 版本标签，或在 Actions 中手动运行“发布 GHCR 镜像”，通过源码测试和容器启动、重建检查后上传到 `ghcr.io/sectsnow/ledgergate`。当前构建 `linux/amd64` 镜像。
 

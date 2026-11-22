@@ -85,10 +85,20 @@ jobs:
           cache-to: type=gha,mode=max
       - name: 验证首次设置与重建后数据保留
         run: |
+          cat > "$RUNNER_TEMP/ledgergate-bind.yaml" <<EOF
+          services:
+            ledgergate:
+              volumes:
+                - "$RUNNER_TEMP/ledgergate-data:/data"
+          EOF
+          export COMPOSE_FILE="compose.yaml:$RUNNER_TEMP/ledgergate-bind.yaml"
+          echo "COMPOSE_FILE=$COMPOSE_FILE" >> "$GITHUB_ENV"
+          sudo install -d -m 0700 -o 0 -g 0 "$RUNNER_TEMP/ledgergate-data"
           docker compose -p ledgergate-ci up -d --no-build --wait --wait-timeout 90
           python3 - <<'PY'
           import http.cookiejar
           import json
+          import os
           import re
           import secrets
           import subprocess
@@ -103,6 +113,15 @@ jobs:
                   assert response.status == 200, path
                   return response.read()
 
+          def verify_process_user():
+              status = subprocess.check_output(["docker", "compose", "-p", "ledgergate-ci", "exec", "-T", "ledgergate", "cat", "/proc/1/status"], text=True)
+              fields = dict(line.split(":", 1) for line in status.splitlines())
+              assert fields["Uid"].split() == ["0"] * 4
+              assert fields["Gid"].split() == ["0"] * 4
+              # DAC_OVERRIDE 和 FOWNER 对应 Linux 能力位 1、3。
+              assert int(fields["CapEff"].strip(), 16) == 0xA
+
+          verify_process_user()
           assert json.loads(request("/api/setup"))["setup_required"] is True
           assets = re.findall(r'(?:src|href)="(/assets/[^"]+)"', request("/").decode())
           assert assets, "缺少前端构建产物"
@@ -110,12 +129,18 @@ jobs:
               assert request(asset), asset
           password = secrets.token_urlsafe(24)
           assert json.loads(request("/api/setup", {"password": password, "confirm_password": password}))["ok"] is True
+          checksum_command = ["docker", "compose", "-p", "ledgergate-ci", "exec", "-T", "ledgergate", "sha256sum", "/data/master.key"]
+          master_key_checksum = subprocess.check_output(checksum_command, text=True)
+          subprocess.run(["docker", "compose", "-p", "ledgergate-ci", "stop", "ledgergate"], check=True)
+          subprocess.run(["sudo", "chown", "-Rh", "10001:10001", os.path.join(os.environ["RUNNER_TEMP"], "ledgergate-data")], check=True)
           subprocess.run(["docker", "compose", "-p", "ledgergate-ci", "up", "-d", "--no-build", "--force-recreate", "--wait", "--wait-timeout", "90"], check=True)
+          verify_process_user()
+          assert subprocess.check_output(checksum_command, text=True) == master_key_checksum
           assert json.loads(request("/api/setup"))["setup_required"] is False
           assert json.loads(request("/api/login", {"password": password}))["ok"] is True
           assert json.loads(request("/api/session"))["authenticated"] is True
           PY
-      - name: 输出容器日志并清理验收数据
+      - name: 输出容器日志并清理验收容器
         if: always()
         run: |
           docker compose -p ledgergate-ci logs --no-color

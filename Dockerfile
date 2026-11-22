@@ -20,16 +20,13 @@ RUN CGO_ENABLED=0 GOTOOLCHAIN=local go build -trimpath -ldflags="-s -w" -o /out/
 
 FROM alpine:3.23.8 AS runtime
 RUN apk add --no-cache ca-certificates tzdata \
-    && addgroup -S -g 10001 ledgergate \
-    && adduser -S -D -H -u 10001 -G ledgergate ledgergate \
     && mkdir -p /data \
-    && chown 10001:10001 /data \
     && chmod 0700 /data
 WORKDIR /app
 COPY --from=backend /out/ledgergate /usr/local/bin/ledgergate
 ENV LEDGERGATE_DATA_DIR=/data \
     TZ=Asia/Shanghai
-USER 10001:10001
+USER 0:0
 EXPOSE 8080
 VOLUME ["/data"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

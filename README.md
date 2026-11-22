@@ -59,6 +59,8 @@ docker compose up -d --build
 
 镜像发布、从 GHCR 拉取、数据挂载及迁移步骤见 [Docker 部署说明](docs/docker.md)。
 
+从 `0.1.1` 起，镜像默认以容器内 root 运行，便于 NAS 直接使用 `./data:/data`。`0.1.0` 默认以 UID 10001 运行，继续使用旧版时可在 Compose 中设置 `user: "0:0"`。
+
 ### 从源码运行
 
 需要 Go 1.26.10+、Node.js 22.12+ 和 pnpm 10.4.0（通过 Corepack 使用）。在仓库根目录执行：
