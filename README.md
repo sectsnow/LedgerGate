@@ -39,7 +39,7 @@
     </td>
     <td width="50%" valign="top">
       <h3>04 · 请求与费用</h3>
-      <p>查看进行中请求、近期响应与上游尝试，复制请求 ID、导出脱敏详情，统计 Token、缓存命中和费用估算。用量趋势与渠道、模型表现持久化保存。</p>
+      <p>查看进行中请求、近期响应与上游尝试，复制请求 ID、导出脱敏详情，统计 Token、缓存命中和费用估算。平滑曲线面积图支持切换请求量、输入输出 Token 和费用；用量趋势与渠道、模型表现持久化保存。</p>
     </td>
   </tr>
 </table>
@@ -55,7 +55,7 @@
 ```yaml
 services:
   ledgergate:
-    image: ghcr.io/sectsnow/ledgergate:0.1.8
+    image: ghcr.io/sectsnow/ledgergate:0.1.9
     restart: unless-stopped
     ports:
       - "8081:8080"

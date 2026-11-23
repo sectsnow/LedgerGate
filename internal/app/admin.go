@@ -952,10 +952,15 @@ func (a *App) overview(c *gin.Context) {
 		return
 	}
 	series := []struct {
-		Hour     int64 `json:"hour"`
-		Requests int64 `json:"requests"`
+		Hour                int64 `json:"hour"`
+		Requests            int64 `json:"requests"`
+		Errors              int64 `json:"errors"`
+		InputTokens         int64 `json:"input_tokens"`
+		OutputTokens        int64 `json:"output_tokens"`
+		CostMicros          int64 `json:"cost_micros"`
+		CostUnknownRequests int64 `json:"cost_unknown_requests"`
 	}{}
-	if err := a.DB.Model(&RequestHour{}).Where("hour >= ? AND hour <= ?", start, now.Unix()).Select("hour, SUM(requests) AS requests").Group("hour").Order("hour").Scan(&series).Error; err != nil {
+	if err := a.DB.Model(&RequestHour{}).Where("hour >= ? AND hour <= ?", start, now.Unix()).Select("hour, SUM(requests) AS requests, SUM(errors) AS errors, SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens, SUM(cost_micros) AS cost_micros, SUM(cost_unknown_requests) AS cost_unknown_requests").Group("hour").Order("hour").Scan(&series).Error; err != nil {
 		fail(c, 500, "读取请求趋势失败")
 		return
 	}

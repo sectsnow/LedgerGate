@@ -424,7 +424,7 @@ export type Overview = {
   cost_unknown_requests: number;
   account_summaries: AccountSummary[];
   activity: RequestDay[];
-  series?: { hour: number; requests: number }[];
+  series?: ({ hour: number; requests: number } & Partial<Pick<RequestDay, "errors" | "input_tokens" | "output_tokens" | "cost_micros" | "cost_unknown_requests">>)[];
 };
 export type RequestDay = {
   date: string;

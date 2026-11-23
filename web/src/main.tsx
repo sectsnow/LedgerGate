@@ -92,6 +92,7 @@ import { GroupRoutingSummary, RouteRoutingStatus, RoutingStrategyIcon, useGroupR
 import { AnnouncementList, MonitorHistory, MonitoringPanels } from "./MonitorActivity";
 import ThemePicker from "./ThemePicker";
 import RequestQuality from "./RequestQuality";
+import RequestTrend from "./RequestTrend";
 import BackupPanel from "./BackupPanel";
 import ProxySettings from "./ProxySettings";
 import NotificationPanel from "./NotificationPanel";
@@ -1019,17 +1020,17 @@ function BalanceOverview({
     return () => observer.disconnect();
   }, []);
   const points = summary.history.slice(-days);
-  const balances = points.map((point) =>
-    point.balance_accounts === summary.accounts ? point.balance : null,
-  );
-  const consumption = points.map((point) =>
-    point.consumption_accounts === summary.accounts ? point.consumption : null,
-  );
+  const balances = points.map((point) => point.balance);
+  const consumption = points.map((point) => point.consumption);
+  const partialDays = points.filter((point) =>
+    (point.balance !== null && point.balance_accounts < summary.accounts) ||
+    (point.consumption !== null && point.consumption_accounts < summary.accounts),
+  ).length;
   const [balanceMin, balanceMax] = chartDomain(balances);
   const [costMin, costMax] = chartDomain(consumption);
   const left = 56;
   const right = 56;
-  const top = 16;
+  const top = 26;
   const bottom = 222;
   const plotWidth = width - left - right;
   const x = (index: number) =>
@@ -1054,17 +1055,12 @@ function BalanceOverview({
     y: (value: number) => number,
   ) => {
     let connected = false;
-    return values
-      .map((value, index) => {
-        if (value === null) {
-          connected = false;
-          return "";
-        }
-        const command = connected ? "L" : "M";
-        connected = true;
-        return `${command}${x(index).toFixed(2)},${y(value).toFixed(2)}`;
-      })
-      .join(" ");
+    return values.map((value, index) => {
+      if (value === null) { connected = false; return ""; }
+      const command = connected ? "L" : "M";
+      connected = true;
+      return `${command}${x(index).toFixed(2)},${y(value).toFixed(2)}`;
+    }).join(" ");
   };
   const active = activeIndex ?? points.length - 1;
   const point = points[active];
@@ -1101,7 +1097,9 @@ function BalanceOverview({
   return (
     <section className="panel balance-overview" data-tone="balance">
       <div className="panel-heading">
-        <h2 className="icon-heading"><Wallet size={18} aria-hidden="true" />余额概览</h2>
+        <div><h2 className="icon-heading"><Wallet size={18} aria-hidden="true" />余额概览</h2>
+          <p>每日按实际采集快照汇总，暂停监控仍保留历史记录。</p>
+        </div>
         <div className="balance-heading-controls">
           <div
             className="balance-period"
@@ -1135,6 +1133,7 @@ function BalanceOverview({
           <i className="consumption-dot" />
           消费趋势
         </span>
+        {partialDays > 0 && <span><i className="partial-dot" />部分采集合计</span>}
       </div>
       <div className="balance-chart" ref={container}>
         <svg
@@ -1144,6 +1143,8 @@ function BalanceOverview({
           role="group"
           aria-label={`最近${days}天账户余额与实际消费趋势`}
         >
+          <text x={left} y="12" className="balance-axis-title">余额</text>
+          <text x={width - right} y="12" textAnchor="end" className="consumption-axis-title">消费</text>
           {[0, 0.25, 0.5, 0.75, 1].map((fraction) => {
             const y = top + (bottom - top) * fraction;
             return (
@@ -1193,7 +1194,7 @@ function BalanceOverview({
                 className="balance-day"
                 tabIndex={0}
                 role="img"
-                aria-label={`${day.date}，余额 ${balances[index] === null ? "未完整采集" : financialAmount(balances[index], currency)}，消费 ${consumption[index] === null ? "未完整采集" : financialAmount(consumption[index], currency)}`}
+                aria-label={`${day.date}，余额${day.balance_accounts < summary.accounts && day.balance !== null ? "（部分合计）" : ""} ${balances[index] === null ? "未采集" : financialAmount(balances[index], currency)}，消费${day.consumption_accounts < summary.accounts && day.consumption !== null ? "（部分合计）" : ""} ${consumption[index] === null ? "未采集" : financialAmount(consumption[index], currency)}`}
                 aria-describedby={activeIndex === index ? tooltipID : undefined}
                 onPointerEnter={(event) => inspect(index, event.clientY)}
                 onPointerMove={(event) => inspect(index, event.clientY)}
@@ -1245,10 +1246,10 @@ function BalanceOverview({
               <time dateTime={point.date}>{Number(point.date.slice(5, 7))}月{Number(point.date.slice(8, 10))}日</time>
             </strong>
             <div className="balance-tooltip-row balance-tooltip-balance">
-              <span>余额：</span><b>{financialAmount(balances[active], currency)}</b>
+              <span>{point.balance !== null && point.balance_accounts < summary.accounts ? "余额（部分）：" : "余额："}</span><b>{financialAmount(balances[active], currency)}</b>
             </div>
             <div className="balance-tooltip-row balance-tooltip-consumption">
-              <span>消费：</span><b>{financialAmount(consumption[active], currency)}</b>
+              <span>{point.consumption !== null && point.consumption_accounts < summary.accounts ? "消费（部分）：" : "消费："}</span><b>{financialAmount(consumption[active], currency)}</b>
             </div>
             {(point.balance_accounts < summary.accounts || point.consumption_accounts < summary.accounts) && (
               <small>余额已采集 {point.balance_accounts}/{summary.accounts} · 消费已采集 {point.consumption_accounts}/{summary.accounts}</small>
@@ -1256,9 +1257,9 @@ function BalanceOverview({
           </div>
         )}
       </div>
-      {recordedDays < points.length && (
+      {(recordedDays < points.length || partialDays > 0) && (
         <p className="balance-history-note">
-          已记录 {recordedDays}/{points.length} 天，未完整采集的日期显示缺口。
+          已记录 {recordedDays}/{points.length} 天，无采集记录的日期留空。{partialDays > 0 && "相邻有数据的日期以实线连接，部分合计可查看采集覆盖数量。"}
         </p>
       )}
       <div className="balance-account-list">
@@ -1507,12 +1508,10 @@ function Overview({
     (_, i) => Math.floor(Date.now() / 3600000) * 3600 - (23 - i) * 3600,
   ).filter(hour => period !== "today" || hour >= Date.parse(`${lastDate}T00:00:00+08:00`) / 1000);
   const points = period === 1 || period === "today" ? hours.map((hour) => ({
+    ...(overview.series?.find((s) => s.hour === hour) ?? { requests: 0, errors: 0, input_tokens: 0, output_tokens: 0, cost_micros: 0, cost_unknown_requests: 0 }),
     label: new Date(hour * 1000).toLocaleTimeString("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false }),
     title: new Date(hour * 1000).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }),
-    requests: overview.series?.find((s) => s.hour === hour)?.requests || 0,
-  })) : days.map((day) => ({ label: day.date.slice(5).replace("-", "/"), title: day.date, requests: day.requests }));
-  const maxCount = Math.max(2, ...points.map((point) => point.requests));
-  const labelIndices = [...new Set([0, 1, 2, 3, 4].map(i => Math.round(i * (points.length - 1) / 4)))];
+  })) : days.map((day) => ({ ...day, label: day.date.slice(5).replace("-", "/"), title: day.date }));
   return (
     <>
       <AccountFinance data={data} />
@@ -1612,43 +1611,8 @@ function Overview({
                 <p>每日汇总保留 {data.settings.request_summary_retention_days} 天，已清理的历史不计入统计。</p>
               )}
             </div>
-            <span className="legend">
-              <i />
-              请求数
-            </span>
           </div>
-          <div className="traffic-chart-scroll" tabIndex={points.length > 31 ? 0 : undefined} role={points.length > 31 ? "region" : undefined} aria-label={points.length > 31 ? "请求趋势，左右滚动查看每日数据" : undefined}>
-            <div style={{ minWidth: points.length > 31 ? points.length * 10 + 54 : undefined }}>
-              <div className="chart">
-                <div className="chart-guides">
-                  <span>{maxCount}</span>
-                  <span>{Math.round(maxCount / 2)}</span>
-                  <span>0</span>
-                </div>
-                <div className="chart-bars">
-                  {points.map((point) => (
-                    <div
-                      className="bar-slot"
-                      key={point.title}
-                      title={`${point.title} · ${point.requests} 次请求`}
-                    >
-                      <div
-                        className={point.requests ? "bar" : "bar zero"}
-                        style={{
-                          height: `${point.requests ? Math.max(4, (point.requests / maxCount) * 100) : 2}%`,
-                        }}
-                      />
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <div className="chart-labels" style={{ justifyContent: points.length === 1 ? "center" : undefined }}>
-                {labelIndices.map((i) => (
-                  <span key={i}>{points[i]?.label}</span>
-                ))}
-              </div>
-            </div>
-          </div>
+          <RequestTrend points={points} />
         </section>
         <section className="panel gateway-summary" data-tone="cost">
           <div className="panel-heading">

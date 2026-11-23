@@ -2,7 +2,9 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -103,6 +105,68 @@ func TestAccountOverviewTimezoneAndZero(t *testing.T) {
 	}
 	if group.History[28].Date != "2026-11-20" || group.History[28].Balance == nil || *group.History[28].Balance != 21 || group.History[29].Date != "2026-11-21" || group.History[29].Balance == nil || *group.History[29].Balance != 22 {
 		t.Fatal("UTC timestamps grouped into the wrong Shanghai day")
+	}
+}
+
+func TestAccountOverviewPreservesPausedHistoryAndPartialDays(t *testing.T) {
+	a := testApp(t)
+	now := time.Date(2026, 11, 24, 12, 0, 0, 0, usageDay(time.Now()).Location())
+	today := usageDay(now)
+	accounts := []Account{
+		{Name: "active-one", Currency: "USD", Enabled: true, Balance: floatPointer(40)},
+		{Name: "active-two", Currency: "USD", Enabled: true, Balance: floatPointer(20)},
+	}
+	for i := 0; i < 12; i++ {
+		accounts = append(accounts, Account{Name: fmt.Sprintf("paused-%d", i), Currency: "USD", Balance: floatPointer(100)})
+	}
+	if err := a.DB.Create(&accounts).Error; err != nil {
+		t.Fatal(err)
+	}
+	var snapshots []Snapshot
+	for i, account := range accounts {
+		snapshots = append(snapshots, Snapshot{AccountID: account.ID, Currency: "USD", Balance: account.Balance, TodayUsed: floatPointer(1), TodayDate: today.AddDate(0, 0, -1).Format("2006-01-02"), Status: "ok", CreatedAt: today.Add(-time.Hour)})
+		if i < 2 {
+			snapshots = append(snapshots, Snapshot{AccountID: account.ID, Currency: "USD", Balance: account.Balance, TodayUsed: floatPointer(0), TodayDate: today.Format("2006-01-02"), Status: "ok", CreatedAt: now.Add(-time.Hour)})
+		}
+	}
+	if err := a.DB.Create(&snapshots).Error; err != nil {
+		t.Fatal(err)
+	}
+	read := func() AccountSummary {
+		t.Helper()
+		groups, err := a.accountOverview(now)
+		if err != nil || len(groups) != 1 {
+			t.Fatal("overview query failed", err)
+		}
+		return groups[0]
+	}
+	group := read()
+	if group.Accounts != 14 || group.Balance == nil || *group.Balance != 1260 {
+		t.Fatal("full-account summary changed", group)
+	}
+	previous, current := group.History[28], group.History[29]
+	if previous.Balance == nil || *previous.Balance != 1260 || previous.Consumption == nil || *previous.Consumption != 14 || previous.BalanceAccounts != 14 || previous.ConsumptionAccounts != 14 {
+		t.Fatal("paused accounts lost their recorded history", previous)
+	}
+	if current.Balance == nil || *current.Balance != 60 || current.Consumption == nil || *current.Consumption != 0 || current.BalanceAccounts != 2 || current.ConsumptionAccounts != 2 {
+		t.Fatal("today's partial data or reported zero consumption was lost", current)
+	}
+	if err := a.DB.Model(&accounts[2]).Update("enabled", true).Error; err != nil {
+		t.Fatal(err)
+	}
+	group = read()
+	if !reflect.DeepEqual(group.History[28], previous) || !reflect.DeepEqual(group.History[29], current) {
+		t.Fatal("reenabling an account changed existing history or invented a missing snapshot", group)
+	}
+	if err := a.DB.Model(&Account{}).Where("enabled = ?", true).Update("enabled", false).Error; err != nil {
+		t.Fatal(err)
+	}
+	group = read()
+	if group.Balance == nil || *group.Balance != 1260 {
+		t.Fatal("pausing all accounts lost saved balances", group)
+	}
+	if !reflect.DeepEqual(group.History[28], previous) || !reflect.DeepEqual(group.History[29], current) {
+		t.Fatal("pausing all accounts hid previously recorded data", group)
 	}
 }
 
