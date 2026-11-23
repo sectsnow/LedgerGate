@@ -224,9 +224,14 @@ func TestGatewaySSEPrefaceKeepsTimeoutAndNoReplay(t *testing.T) {
 			if err := a.DB.Model(&Setting{}).Where("id=1").Update("first_output_seconds", 1).Error; err != nil {
 				t.Fatal(err)
 			}
+			var primaryCalls, backupCalls atomic.Int32
 			primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				_, _ = io.Copy(io.Discard, r.Body)
 				w.Header().Set("Content-Type", "text/event-stream")
+				if primaryCalls.Add(1) > 1 {
+					fmt.Fprint(w, streamFixture("responses"))
+					return
+				}
 				for range 1280 {
 					if err := writeFrame(w, "response.in_progress", `{"type":"response.in_progress"}`); err != nil {
 						return
@@ -240,7 +245,6 @@ func TestGatewaySSEPrefaceKeepsTimeoutAndNoReplay(t *testing.T) {
 				<-r.Context().Done()
 			}))
 			defer primary.Close()
-			var backupCalls atomic.Int32
 			backup := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				backupCalls.Add(1)
 				fmt.Fprint(w, streamFixture("responses"))
@@ -248,7 +252,8 @@ func TestGatewaySSEPrefaceKeepsTimeoutAndNoReplay(t *testing.T) {
 			defer backup.Close()
 			channel := createChannel(t, h, cookie, "primary", primary.URL, "responses")
 			token := createGroup(t, h, cookie, []Channel{channel, createChannel(t, h, cookie, "backup", backup.URL, "responses")}, "priority")
-			response := call(h, "POST", "/v1/responses", `{"model":"my-model","stream":true,"input":"hello"}`, token)
+			body := `{"model":"my-model","stream":true,"input":"hello"}`
+			response := call(h, "POST", "/v1/responses", body, token)
 			log := latestRequestForTest(t, a)
 			message := "上游在流中报告错误"
 			if mode == "timeout" {
@@ -257,12 +262,13 @@ func TestGatewaySSEPrefaceKeepsTimeoutAndNoReplay(t *testing.T) {
 			if log.Status != 502 || log.Attempts != 1 || log.FirstTokenMS != nil || backupCalls.Load() != 0 || !strings.Contains(response.Body.String(), message) {
 				t.Fatalf("preface disabled protection or replayed output: %+v backup_calls=%d", log, backupCalls.Load())
 			}
-			var route Route
-			if err := a.DB.Where("channel_id=?", channel.ID).First(&route).Error; err != nil {
-				t.Fatal(err)
+			if len(a.health) != 0 || len(a.routeHealth) != 0 {
+				t.Fatal("committed preface failure cooled the upstream")
 			}
-			if _, cooled := a.routeHealth[route.ID]; !cooled {
-				t.Fatal("real upstream failure did not cool the model route")
+			response = call(h, "POST", "/v1/responses", body, token)
+			log = latestRequestForTest(t, a)
+			if response.Code != 200 || log.Status != 200 || log.Attempts != 1 || log.ChannelID != channel.ID || primaryCalls.Load() != 2 || backupCalls.Load() != 0 {
+				t.Fatalf("next request switched after a committed preface failure: %+v primary=%d backup=%d", log, primaryCalls.Load(), backupCalls.Load())
 			}
 		})
 	}
