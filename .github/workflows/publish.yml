@@ -34,6 +34,9 @@ jobs:
         working-directory: web
         run: |
           corepack enable
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            node -e 'const actual = require("./package.json").version; const expected = process.env.GITHUB_REF_NAME.slice(1); if (actual !== expected) throw new Error(`版本号不一致：package.json=${actual}，发布标签=${expected}`);'
+          fi
           corepack pnpm install --frozen-lockfile
           corepack pnpm test
           corepack pnpm build

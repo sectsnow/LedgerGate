@@ -98,6 +98,9 @@ func (doc transferDocument) validate() error {
 	}
 	modelNames := map[string]bool{}
 	for _, group := range doc.Models {
+		if err := group.relayConfig().validate(); err != nil {
+			return err
+		}
 		if !addID(modelIDs, group.ID) || !transferName(group.Name, 150) || modelNames[group.Name] || len(group.Vendor) > 80 || len(group.PriceModel) > 250 || !slices.Contains([]string{"manual", "weighted", "priority"}, group.Strategy) || !slices.Contains([]string{"", "auto", "manual"}, group.PriceMode) || !validPrice(&group.InputPriceMicros) || !validPrice(&group.OutputPriceMicros) || !transferPricing(group.Pricing) || len(group.Routes) > 100 {
 			return errors.New("统一模型、价格或调度策略无效")
 		}

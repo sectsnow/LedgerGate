@@ -1715,6 +1715,8 @@ dialog h2 {
   justify-content: space-between;
   margin: 25px 0 12px;
 }
+.group-relay-config { border: 0; padding: 0; min-width: 0; }
+.group-relay-config > legend { margin-bottom: 12px; font-size: 13px; }
 .route-editor {
   display: grid;
   grid-template-columns: 1fr 1.2fr 70px 28px;
@@ -2174,6 +2176,8 @@ dialog:has(.request-detail) { width: min(1300px, calc(100vw - 40px)); }
 .backup-help { padding: 0 24px 24px; font-size: 12px; line-height: 1.8; color: var(--text-muted); }
 .backup-help > summary, .runtime-options > summary, .discovered-models > summary { cursor: pointer; }
 .backup-help pre { overflow-x: auto; padding: 12px; background: var(--surface-alt); border-radius: var(--radius-control); }
+.backup-restore { display: grid; gap: 14px; margin-top: 14px; }
+.backup-restore > button { justify-self: start; }
 .runtime-options { min-width: 0; }
 .runtime-options > summary { font-size: 13px; color: var(--text); }
 .runtime-options > .form-grid, .runtime-options > fieldset { margin-top: 16px; }

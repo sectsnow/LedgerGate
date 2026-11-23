@@ -48,6 +48,7 @@ type App struct {
 	dataDir        string
 	adminPassword  string
 	envPassword    bool
+	runtimeMu      sync.RWMutex
 	backupMu       sync.Mutex
 	priceSyncMu    sync.Mutex
 	modelSyncMu    sync.Mutex
@@ -57,6 +58,7 @@ type App struct {
 	weights        map[uint]int
 	health         map[uint]channelState
 	routeHealth    map[uint]channelState
+	groupRouting   map[uint]*groupRouteState
 	monitoring     map[uint]bool
 	loginAttempts  map[string][]time.Time
 	activeRequests map[uint]*requestTrace
@@ -65,6 +67,13 @@ type App struct {
 }
 
 func Open(config Config) (*App, error) {
+	if err := recoverPendingRestore(config.DataDir); err != nil {
+		return nil, err
+	}
+	return open(config)
+}
+
+func open(config Config) (*App, error) {
 	if err := os.MkdirAll(config.DataDir, 0700); err != nil {
 		return nil, err
 	}
@@ -102,6 +111,12 @@ func Open(config Config) (*App, error) {
 		return nil, err
 	}
 	sqlDB.SetMaxOpenConns(1)
+	opened := false
+	defer func() {
+		if !opened {
+			sqlDB.Close()
+		}
+	}()
 	if err = db.Exec("PRAGMA foreign_keys=ON").Error; err != nil {
 		return nil, err
 	}
@@ -139,9 +154,9 @@ func Open(config Config) (*App, error) {
 		client:  &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 		weights: map[uint]int{}, health: map[uint]channelState{}, monitoring: map[uint]bool{}, loginAttempts: map[string][]time.Time{}}
 	if err := app.migrateNotifications(); err != nil {
-		sqlDB.Close()
 		return nil, err
 	}
+	opened = true
 	return app, nil
 }
 
@@ -224,6 +239,12 @@ func (a *App) unseal(value string) (string, error) {
 }
 
 func (a *App) Close() error {
+	a.runtimeMu.Lock()
+	defer a.runtimeMu.Unlock()
+	return a.close()
+}
+
+func (a *App) close() error {
 	a.client.CloseIdleConnections()
 	a.proxyMu.Lock()
 	if a.proxyClient != nil {
@@ -242,23 +263,29 @@ func fail(c *gin.Context, status int, message string) {
 }
 
 func (a *App) admin(c *gin.Context) {
+	if a.requireAdmin(c) {
+		c.Next()
+	}
+}
+
+func (a *App) requireAdmin(c *gin.Context) bool {
 	if a.setupRequired() {
 		fail(c, 401, "请先设置管理员密码")
-		return
+		return false
 	}
 	cookie, err := c.Cookie("ledgergate_session")
 	var session Session
 	if err != nil || a.DB.Where("digest = ? AND expires_at > ?", digest(cookie), time.Now()).First(&session).Error != nil {
 		fail(c, 401, "请先登录")
-		return
+		return false
 	}
 	if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
 		if c.GetHeader("X-LedgerGate-Request") != "1" {
 			fail(c, 403, "缺少请求校验头")
-			return
+			return false
 		}
 	}
-	c.Next()
+	return true
 }
 
 func (a *App) login(c *gin.Context) {
@@ -331,7 +358,11 @@ func (a *App) RunTasks(ctx context.Context) {
 				if ctx.Err() != nil {
 					return
 				}
-				task(ctx)
+				a.runtimeMu.RLock()
+				if ctx.Err() == nil {
+					task(ctx)
+				}
+				a.runtimeMu.RUnlock()
 				select {
 				case <-ctx.Done():
 					return

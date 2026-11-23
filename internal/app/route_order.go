@@ -83,6 +83,7 @@ func (a *App) reorderGroupRoutes(c *gin.Context) {
 		return
 	}
 	a.mu.Lock()
+	delete(a.groupRouting, id)
 	for routeID := range seen {
 		delete(a.weights, routeID)
 	}

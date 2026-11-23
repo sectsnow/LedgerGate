@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"ledgergate/internal/backup"
 	"ledgergate/web"
 
 	"github.com/gin-gonic/gin"
@@ -28,12 +29,32 @@ func (a *App) Router() http.Handler {
 		c.Header("Referrer-Policy", "same-origin")
 		c.Header("X-Frame-Options", "DENY")
 		bodyLimit := int64(32 << 20)
+		if c.Request.URL.Path == "/api/backup/restore" {
+			bodyLimit = backup.Limit + (1 << 20)
+		}
 		if c.Request.URL.Path == "/api/login" || c.Request.URL.Path == "/api/setup" || c.Request.URL.Path == "/api/admin/password" {
 			bodyLimit = 4096
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, bodyLimit)
 		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
 			c.Header("Cache-Control", "no-store")
+		}
+		c.Next()
+	})
+	r.Use(func(c *gin.Context) {
+		// 恢复必须等所有请求和后台写入完成，数据库和主密钥一起切换。
+		if c.Request.Method == http.MethodPost && c.Request.URL.Path == "/api/backup/restore" {
+			a.runtimeMu.RLock()
+			authorized := a.requireAdmin(c)
+			a.runtimeMu.RUnlock()
+			if !authorized {
+				return
+			}
+			a.runtimeMu.Lock()
+			defer a.runtimeMu.Unlock()
+		} else {
+			a.runtimeMu.RLock()
+			defer a.runtimeMu.RUnlock()
 		}
 		c.Next()
 	})
@@ -56,6 +77,7 @@ func (a *App) Router() http.Handler {
 	api.PUT("/proxy", a.saveProxy)
 	api.POST("/proxy/test", a.testProxy)
 	api.POST("/backup", a.createBackup)
+	api.POST("/backup/restore", a.restoreBackup)
 	api.GET("/data-transfer", a.transferCatalog)
 	api.POST("/data-transfer/export", a.exportData)
 	api.POST("/data-transfer/preview", a.previewDataImport)
@@ -95,6 +117,8 @@ func (a *App) Router() http.Handler {
 			return
 		}
 		for i := range items {
+			config := items[i].relayConfig()
+			items[i].RelayConfig = &config
 			items[i].Vendor = items[i].modelVendor()
 			items[i].PriceMode = items[i].priceMode()
 			if items[i].PriceMode == "manual" {
@@ -125,6 +149,9 @@ func (a *App) Router() http.Handler {
 			fail(c, 500, "删除路由失败")
 			return
 		}
+		a.mu.Lock()
+		delete(a.groupRouting, id)
+		a.mu.Unlock()
 		c.Status(204)
 	})
 	api.GET("/keys", func(c *gin.Context) {
@@ -706,6 +733,15 @@ func (a *App) saveGroup(c *gin.Context) {
 		}
 		input.ID = id
 	}
+	if input.RelayConfig == nil && input.ID != 0 {
+		input.RelayConfig = existing.RelayConfig
+	}
+	if err := input.Group.relayConfig().validate(); err != nil {
+		fail(c, 400, err.Error())
+		return
+	}
+	config := input.Group.relayConfig()
+	input.RelayConfig = &config
 	if input.Strategy == "" {
 		input.Strategy = "manual"
 		if input.ID != 0 {
@@ -801,6 +837,7 @@ func (a *App) saveGroup(c *gin.Context) {
 	}
 	a.mu.Lock()
 	clear(a.weights)
+	delete(a.groupRouting, input.ID)
 	a.mu.Unlock()
 	c.JSON(200, input.Group)
 }

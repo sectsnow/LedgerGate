@@ -59,7 +59,7 @@ func (a *App) listRequests(c *gin.Context) {
 		return
 	}
 	items := []RequestLog{}
-	if query.Order("id DESC").Offset((page-1)*size).Limit(size).Find(&items).Error != nil {
+	if query.Order("CASE WHEN state IN ('running', 'streaming') THEN 0 ELSE 1 END").Order("id DESC").Offset((page-1)*size).Limit(size).Find(&items).Error != nil {
 		fail(c, 500, "读取请求记录失败")
 		return
 	}

@@ -16,6 +16,86 @@ type sseEvent struct {
 	Data  string
 }
 
+func (event sseEvent) kind(body object) string {
+	if kind := str(body["type"]); kind != "" {
+		return kind
+	}
+	return event.Event
+}
+
+// 只暂存确定不含输出的启动事件；其他合法事件可透传，首 Token 另按内容计时。
+func streamEventStartsOutput(event sseEvent, protocol string) bool {
+	if streamEventHasOutput(event, protocol) {
+		return true
+	}
+	value, err := decodeJSON([]byte(event.Data))
+	if err != nil {
+		return false
+	}
+	body := obj(value)
+	if protocol == "openai" {
+		choices, ok := body["choices"].([]any)
+		if !ok || len(array(body["citations"])) > 0 {
+			return true
+		}
+		for _, raw := range choices {
+			choice := obj(raw)
+			if str(choice["finish_reason"]) != "" || choice["message"] != nil || len(array(obj(choice["logprobs"])["content"])) > 0 || len(array(obj(choice["logprobs"])["refusal"])) > 0 {
+				return true
+			}
+			for field, value := range obj(choice["delta"]) {
+				if field == "role" || value == nil || value == "" {
+					continue
+				}
+				if values, ok := value.([]any); ok && len(values) == 0 {
+					continue
+				}
+				return true
+			}
+		}
+		return false
+	}
+	kind := event.kind(body)
+	if protocol == "responses" {
+		switch kind {
+		case "response.created", "response.in_progress", "response.queued":
+			return len(array(obj(body["response"])["output"])) > 0
+		case "response.output_item.added":
+			item := obj(body["item"])
+			if str(item["type"]) != "message" && str(item["type"]) != "reasoning" {
+				return true
+			}
+			return len(array(item["content"])) > 0 || len(array(item["summary"])) > 0 || str(item["encrypted_content"]) != "" || item["reasoning_content"] != nil
+		case "response.content_part.added", "response.reasoning_summary_part.added":
+			part := obj(body["part"])
+			return str(part["type"]) != "output_text" && str(part["type"]) != "reasoning_text" && str(part["type"]) != "summary_text" && str(part["type"]) != "refusal"
+		case "response.output_text.delta", "response.refusal.delta", "response.reasoning_text.delta", "response.reasoning_summary_text.delta", "response.function_call_arguments.delta":
+			return false
+		}
+		return true
+	}
+	switch kind {
+	case "message_start":
+		return len(array(obj(body["message"])["content"])) > 0
+	case "ping", "content_block_stop":
+		return false
+	case "content_block_start":
+		block := obj(body["content_block"])
+		return str(block["type"]) != "text" && str(block["type"]) != "thinking" || str(block["signature"]) != "" || len(array(block["citations"])) > 0
+	case "content_block_delta":
+		delta := obj(body["delta"])
+		switch str(delta["type"]) {
+		case "text_delta", "thinking_delta", "input_json_delta":
+			return false
+		case "signature_delta":
+			return str(delta["signature"]) != ""
+		}
+	case "message_delta":
+		return str(obj(body["delta"])["stop_reason"]) != ""
+	}
+	return true
+}
+
 func readEvent(scanner *bufio.Scanner) (sseEvent, error) {
 	event := sseEvent{}
 	data := []string{}
@@ -67,7 +147,7 @@ func inspectEvent(event sseEvent, protocol string, result *completion, convert b
 	if !ok {
 		return nil, false, errors.New("上游 SSE 数据必须是对象")
 	}
-	kind := str(body["type"])
+	kind := event.kind(body)
 	if event.Event == "error" || body["error"] != nil || kind == "error" || kind == "response.failed" || kind == "response.cancelled" {
 		return nil, false, errors.New("上游在流中报告错误")
 	}
@@ -82,7 +162,7 @@ func inspectEvent(event sseEvent, protocol string, result *completion, convert b
 		for _, raw := range array(body["choices"]) {
 			choice := obj(raw)
 			if convert && integer(choice["index"]) != 0 {
-				return nil, false, errors.New("跨协议流仅支持一个 choice")
+				return nil, false, responseProcessingError("跨协议流仅支持一个 choice")
 			}
 			if finish := str(choice["finish_reason"]); finish != "" {
 				result.Finish = finish
@@ -98,7 +178,7 @@ func inspectEvent(event sseEvent, protocol string, result *completion, convert b
 				deltas = append(deltas, streamDelta{Text: text})
 			}
 			if delta["reasoning_content"] != nil || delta["audio"] != nil {
-				return nil, false, errors.New("流中内容类型暂不支持跨协议转换")
+				return nil, false, responseProcessingError("流中内容类型暂不支持跨协议转换")
 			}
 			for _, rawCall := range array(delta["tool_calls"]) {
 				call := obj(rawCall)
@@ -142,7 +222,7 @@ func inspectEvent(event sseEvent, protocol string, result *completion, convert b
 					deltas = append(deltas, streamDelta{Text: text})
 				}
 			default:
-				return nil, false, errors.New("Anthropic 流内容类型暂不支持转换")
+				return nil, false, responseProcessingError("Anthropic 流内容类型暂不支持转换")
 			}
 		case "content_block_delta":
 			if !convert {
@@ -155,7 +235,7 @@ func inspectEvent(event sseEvent, protocol string, result *completion, convert b
 			case "input_json_delta":
 				deltas = append(deltas, streamDelta{Index: int(integer(body["index"])), Tool: &toolCall{Arguments: str(delta["partial_json"])}})
 			default:
-				return nil, false, errors.New("Anthropic 增量类型暂不支持转换")
+				return nil, false, responseProcessingError("Anthropic 增量类型暂不支持转换")
 			}
 		}
 		return deltas, false, nil
@@ -177,7 +257,7 @@ func inspectEvent(event sseEvent, protocol string, result *completion, convert b
 			deltas = append(deltas, streamDelta{Index: int(integer(body["output_index"])), Tool: &toolCall{ID: str(item["call_id"]), Name: str(item["name"]), Arguments: str(item["arguments"])}})
 		case "message":
 		default:
-			return nil, false, errors.New("Responses 输出类型暂不支持跨协议转换")
+			return nil, false, responseProcessingError("Responses 输出类型暂不支持跨协议转换")
 		}
 	case "response.function_call_arguments.delta":
 		if convert {
@@ -241,10 +321,7 @@ func (s *streamWriter) send(kind string, body object) error {
 	if err := writeFrame(s.writer, kind, jsonString(body)); err != nil {
 		return err
 	}
-	if flusher, ok := s.writer.(http.Flusher); ok {
-		flusher.Flush()
-	}
-	return nil
+	return http.NewResponseController(s.writer).Flush()
 }
 
 func (s *streamWriter) chunk(delta object, finish any) object {
@@ -279,7 +356,7 @@ func (s *streamWriter) start(result completion) error {
 
 func (s *streamWriter) delta(delta streamDelta) error {
 	if s.text.Len() > 16<<20 {
-		return errors.New("跨协议流累计内容超过 16 MiB")
+		return responseProcessingError("跨协议流累计内容超过 16 MiB")
 	}
 	if delta.Text != "" {
 		if s.textIndex < 0 {
@@ -332,7 +409,7 @@ func (s *streamWriter) delta(delta streamDelta) error {
 		}
 	}
 	if len(tool.Arguments)+len(delta.Tool.Arguments) > 4<<20 {
-		return errors.New("工具参数超过 4 MiB")
+		return responseProcessingError("工具参数超过 4 MiB")
 	}
 	tool.Arguments += delta.Tool.Arguments
 	switch s.protocol {
@@ -387,7 +464,10 @@ func (s *streamWriter) finish(result *completion) error {
 				return err
 			}
 		}
-		return writeFrame(s.writer, "", "[DONE]")
+		if err := writeFrame(s.writer, "", "[DONE]"); err != nil {
+			return err
+		}
+		return http.NewResponseController(s.writer).Flush()
 	}
 	if s.protocol == "anthropic" {
 		for index := 0; index < s.nextIndex; index++ {

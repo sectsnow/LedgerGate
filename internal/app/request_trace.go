@@ -2,8 +2,10 @@ package app
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -212,19 +214,40 @@ func (a *App) finishRequestTrace(t *requestTrace, log *RequestLog) {
 
 type requestCaptureWriter struct {
 	gin.ResponseWriter
-	trace *requestTrace
+	trace    *requestTrace
+	ctx      context.Context
+	writeErr error
 }
 
 func (w *requestCaptureWriter) Write(data []byte) (int, error) {
+	if err := w.ctx.Err(); err != nil {
+		return 0, err
+	}
 	n, err := w.ResponseWriter.Write(data)
+	w.writeErr = err
 	w.trace.appendResponse(data[:n])
 	return n, err
 }
 
 func (w *requestCaptureWriter) WriteString(data string) (int, error) {
+	if err := w.ctx.Err(); err != nil {
+		return 0, err
+	}
 	n, err := w.ResponseWriter.WriteString(data)
+	w.writeErr = err
 	w.trace.appendResponse([]byte(data[:n]))
 	return n, err
+}
+
+func (w *requestCaptureWriter) FlushError() error {
+	w.ResponseWriter.WriteHeaderNow()
+	// Gin 的 Flush 不返回错误，展开后检查底层连接的刷新结果。
+	writer := http.ResponseWriter(w.ResponseWriter)
+	if wrapped, ok := writer.(interface{ Unwrap() http.ResponseWriter }); ok {
+		writer = wrapped.Unwrap()
+	}
+	w.writeErr = http.NewResponseController(writer).Flush()
+	return w.writeErr
 }
 
 func redactLogValue(value any) any {

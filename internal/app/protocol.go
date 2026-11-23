@@ -492,6 +492,10 @@ func chatToAnthropic(chat object) (object, error) {
 	return result, nil
 }
 
+type responseProcessingError string
+
+func (err responseProcessingError) Error() string { return "网关响应处理失败：" + string(err) }
+
 type toolCall struct {
 	ID        string
 	Name      string
@@ -552,7 +556,7 @@ func parseCompletion(body object, protocol string) (completion, error) {
 	if protocol == "openai" {
 		choices := array(body["choices"])
 		if len(choices) != 1 {
-			return result, errors.New("跨协议响应必须包含一个 choice")
+			return result, responseProcessingError("跨协议响应必须包含一个 choice")
 		}
 		choice := obj(choices[0])
 		message := obj(choice["message"])
@@ -561,7 +565,7 @@ func parseCompletion(body object, protocol string) (completion, error) {
 			for _, raw := range blocks {
 				block := obj(raw)
 				if str(block["type"]) != "text" {
-					return result, errors.New("响应内容类型暂不支持跨协议转换")
+					return result, responseProcessingError("响应内容类型暂不支持跨协议转换")
 				}
 				result.Text += str(block["text"])
 			}
@@ -586,7 +590,7 @@ func parseCompletion(body object, protocol string) (completion, error) {
 			case "tool_use":
 				result.Tools = append(result.Tools, toolCall{str(block["id"]), str(block["name"]), jsonString(block["input"])})
 			default:
-				return result, errors.New("上游返回的内容类型暂不支持跨协议转换")
+				return result, responseProcessingError("上游返回的内容类型暂不支持跨协议转换")
 			}
 		}
 		switch str(body["stop_reason"]) {
@@ -613,13 +617,13 @@ func parseCompletion(body object, protocol string) (completion, error) {
 					} else if str(block["type"]) == "refusal" {
 						result.Text += str(block["refusal"])
 					} else {
-						return result, errors.New("Responses 输出内容类型暂不支持转换")
+						return result, responseProcessingError("Responses 输出内容类型暂不支持转换")
 					}
 				}
 			case "function_call":
 				result.Tools = append(result.Tools, toolCall{str(item["call_id"]), str(item["name"]), str(item["arguments"])})
 			default:
-				return result, errors.New("Responses 输出项暂不支持转换")
+				return result, responseProcessingError("Responses 输出项暂不支持转换")
 			}
 		}
 		if str(body["status"]) == "incomplete" {

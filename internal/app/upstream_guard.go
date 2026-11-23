@@ -101,24 +101,6 @@ func retryAfter(value string, now time.Time, fallback time.Duration) time.Time {
 	return now.Add(fallback)
 }
 
-func (a *App) markRouteFailed(route Route, channel Channel, status int, header http.Header, message string) {
-	until := time.Now().Add(time.Duration(channel.CooldownSeconds) * time.Second)
-	if status == http.StatusTooManyRequests {
-		until = retryAfter(header.Get("Retry-After"), time.Now(), time.Duration(channel.CooldownSeconds)*time.Second)
-	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	state := channelState{Until: until, Error: message}
-	if status == http.StatusNotFound {
-		if a.routeHealth == nil {
-			a.routeHealth = map[uint]channelState{}
-		}
-		a.routeHealth[route.ID] = state
-	} else {
-		a.health[channel.ID] = state
-	}
-}
-
 func (a *App) reserveRouteProbe(id uint) {
 	state := a.routeHealth[id]
 	if !state.Until.IsZero() {

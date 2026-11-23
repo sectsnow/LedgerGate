@@ -159,12 +159,19 @@ export type ModelPricing = PriceRates & {
   updated_at?: string | null;
   stale?: boolean;
 };
+export type GroupRelayConfig = {
+  member_max_attempts: number;
+  member_retry_interval_seconds: number;
+  member_cooldown_seconds: number;
+  member_affinity_seconds: number;
+};
 export type Group = {
   id: number;
   name: string;
   vendor: string;
   strategy: string;
   active_route_id: number;
+  relay_config: GroupRelayConfig | null;
   input_price_micros: number;
   output_price_micros: number;
   price_mode: "auto" | "manual";

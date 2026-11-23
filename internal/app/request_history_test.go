@@ -222,7 +222,7 @@ func TestRequestHistoryCancellationAndAttempts(t *testing.T) {
 		t.Fatal("cancelled request remained running", row.State, row.Status)
 	}
 	_, detail := historyDetailForTest(t, h, cookie, row.ID)
-	if len(detail.Attempts) != 2 || detail.Attempts[0].Status != 503 || detail.Attempts[1].Status != 499 {
+	if len(detail.Attempts) != 3 || detail.Attempts[0].Status != 503 || detail.Attempts[1].Status != 503 || detail.Attempts[2].Status != 499 {
 		t.Fatal("retry or cancellation history lost", detail.Attempts)
 	}
 }

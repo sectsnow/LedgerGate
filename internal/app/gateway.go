@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/render"
 )
 
 type candidate struct {
@@ -117,12 +118,6 @@ func (a *App) releaseProbe(id uint) {
 	}
 }
 
-func (a *App) markFailed(channel Channel, message string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.health[channel.ID] = channelState{Until: time.Now().Add(time.Duration(channel.CooldownSeconds) * time.Second), Error: message}
-}
-
 func setUpstreamAuth(req *http.Request, protocol, key string) {
 	if protocol == "anthropic" {
 		req.Header.Set("x-api-key", key)
@@ -179,11 +174,9 @@ func (a *App) forward(c *gin.Context, protocol string) {
 	log := RequestLog{RequestID: requestID, KeyID: c.GetUint("key_id"), KeyName: c.GetString("key_name"), Protocol: protocol, Status: 502, CreatedAt: started, StartedAt: &started, MetricsVersion: 1, CostStatus: "unknown"}
 	trace := a.beginRequestTrace(&log)
 	c.Set("request_trace", trace)
-	c.Writer = &requestCaptureWriter{ResponseWriter: c.Writer, trace: trace}
+	responseWriter := &requestCaptureWriter{ResponseWriter: c.Writer, trace: trace, ctx: c.Request.Context()}
+	c.Writer = responseWriter
 	defer func() {
-		if c.Request.Context().Err() != nil && log.Status < 400 {
-			log.Status, log.Error = 499, "客户端已断开"
-		}
 		timings.apply(&log)
 		a.finishRequestTrace(trace, &log)
 	}()
@@ -229,21 +222,42 @@ func (a *App) forward(c *gin.Context, protocol string) {
 		fail(c, log.Status, log.Error)
 		return
 	}
-	candidates := a.candidates(group)
-	if protocol == "responses" && (body["previous_response_id"] != nil || body["conversation"] != nil) {
-		channels := map[uint]bool{}
-		for _, item := range candidates {
-			channels[item.Channel.ID] = true
+	var candidates []candidate
+	excludedRoutes, excludedChannels := map[uint]bool{}, map[uint]bool{}
+	memberAttempts := map[uint]int{}
+	var retry *candidate
+	retryRevision := ""
+	var releasePick func()
+	defer func() {
+		if releasePick != nil {
+			releasePick()
 		}
-		// shortcut: 有状态续接限定单一渠道，需要多渠道时再实现持久化会话亲和。
-		if len(channels) > 1 {
-			log.Status, log.Error = 400, "有状态 Responses 续接需要配置单一渠道的模型路由"
-			fail(c, 400, log.Error)
+	}()
+	// 上游暂时失败先留在当前成员重试；等待同样受整次请求时间预算约束。
+	failure := func(item candidate, probe, retryable, channelFailure bool, header http.Header) {
+		if requestCtx.Err() != nil {
 			return
 		}
+		config := group.relayConfig()
+		if group.Strategy == "priority" && !probe && retryable && memberAttempts[item.Route.ID] < config.MemberMaxAttempts {
+			if log.Attempts < options.MaxAttempts {
+				timer := time.NewTimer(time.Duration(config.MemberRetryIntervalSeconds) * time.Second)
+				defer timer.Stop()
+				select {
+				case <-requestCtx.Done():
+				case <-timer.C:
+					retry, retryRevision = &item, groupRoutingRevision(group)
+				}
+			}
+			return
+		}
+		a.recordMemberFailure(group, item, channelFailure, header, log.Status, log.Error)
 	}
-	excluded := map[uint]bool{}
 	for {
+		if releasePick != nil {
+			releasePick()
+			releasePick = nil
+		}
 		if c.Request.Context().Err() != nil {
 			log.Status, log.Error = 499, "客户端已断开"
 			return
@@ -256,13 +270,52 @@ func (a *App) forward(c *gin.Context, protocol string) {
 			log.Error = "已达到上游尝试次数上限"
 			break
 		}
-		item, ok := a.pick(candidates, group.Strategy, excluded)
+		if err := a.DB.WithContext(requestCtx).Preload("Routes").First(&group, group.ID).Error; err != nil {
+			log.Status, log.Error = 404, "模型路由已不存在或无法读取"
+			break
+		}
+		candidates = a.candidates(group)
+		if protocol == "responses" && (body["previous_response_id"] != nil || body["conversation"] != nil) {
+			// shortcut: 有状态续接限定单一渠道，多渠道续接需持久化响应归属。
+			channels := map[uint]bool{}
+			for _, candidate := range candidates {
+				channels[candidate.Channel.ID] = true
+			}
+			if len(channels) > 1 {
+				log.Status, log.Error = 400, "有状态 Responses 续接需要配置单一渠道的模型路由"
+				fail(c, log.Status, log.Error)
+				return
+			}
+		}
+		var item candidate
+		ok, probe := false, false
+		if retry != nil && retryRevision == groupRoutingRevision(group) {
+			for _, current := range candidates {
+				if current.Route.ID == retry.Route.ID && memberAttempts[current.Route.ID] < group.relayConfig().MemberMaxAttempts && a.memberRetryAvailable(current) {
+					item, ok = current, true
+					break
+				}
+			}
+		}
+		retry = nil
+		if !ok {
+			item, ok, probe = a.pickGroup(group, candidates, excludedRoutes, excludedChannels)
+		}
 		if !ok {
 			break
 		}
-		excluded[item.Channel.ID] = true
-		defer a.releaseProbe(item.Channel.ID)
-		defer a.releaseRouteProbe(item.Route.ID)
+		excludedRoutes[item.Route.ID] = true
+		if group.Strategy != "priority" {
+			excludedChannels[item.Channel.ID] = true
+		}
+		pickedGroup := group
+		releasePick = func() {
+			if pickedGroup.Strategy != "priority" || probe {
+				a.releaseProbe(item.Channel.ID)
+				a.releaseRouteProbe(item.Route.ID)
+				a.releaseGroupProbe(pickedGroup, item)
+			}
+		}
 		// 前一次上游等待期间可能停用了渠道或暂停了账户，故障切换前重新核对状态。
 		var current Channel
 		if enabledChannels(a.DB.WithContext(c.Request.Context())).Select("id").First(&current, item.Channel.ID).Error != nil {
@@ -271,6 +324,10 @@ func (a *App) forward(c *gin.Context, protocol string) {
 		converted, upstreamProtocol, err := item.Channel.prepareRequest(body, protocol)
 		if err != nil {
 			log.Status, log.Error = 400, err.Error()
+			if group.Strategy == "priority" {
+				fail(c, log.Status, log.Error)
+				return
+			}
 			continue
 		}
 		// 每次尝试使用独立副本，保留客户端模型名供后续路由使用。
@@ -290,6 +347,11 @@ func (a *App) forward(c *gin.Context, protocol string) {
 		key, err := a.unseal(item.Channel.APIKey)
 		if err != nil {
 			log.Error = err.Error()
+			if group.Strategy == "priority" {
+				log.Status = 500
+				fail(c, log.Status, log.Error)
+				return
+			}
 			continue
 		}
 		attemptCtx, cancel := context.WithTimeout(requestCtx, time.Duration(item.Channel.TimeoutSeconds)*time.Second)
@@ -301,6 +363,11 @@ func (a *App) forward(c *gin.Context, protocol string) {
 			guard.Close()
 			cancel()
 			log.Error = "上游请求地址无效"
+			if group.Strategy == "priority" {
+				log.Status = 500
+				fail(c, log.Status, log.Error)
+				return
+			}
 			continue
 		}
 		setUpstreamAuth(req, upstreamProtocol, key)
@@ -309,6 +376,7 @@ func (a *App) forward(c *gin.Context, protocol string) {
 			req.Header.Set("Accept", "text/event-stream")
 		}
 		log.ChannelID, log.Attempts = item.Channel.ID, log.Attempts+1
+		memberAttempts[item.Route.ID]++
 		rate := a.recordRequestRoute(&log, item.Route, item.Channel, upstreamProtocol)
 		a.traceAttempt(trace, log)
 		resp, err := a.doRequest(req, item.Channel.UseProxy)
@@ -324,8 +392,16 @@ func (a *App) forward(c *gin.Context, protocol string) {
 			if cause != nil {
 				log.Error = cause.Error()
 			}
+			var connectionErr upstreamConnectionError
+			connectionFailure := errors.As(err, &connectionErr)
+			if cause == nil && !connectionFailure {
+				log.Status = 500
+				trace.endAttempt(log.Status, log.Error)
+				fail(c, log.Status, log.Error)
+				return
+			}
 			trace.endAttempt(log.Status, log.Error)
-			a.markFailed(item.Channel, log.Error)
+			failure(item, probe, true, connectionFailure && cause == nil, nil)
 			continue
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -334,16 +410,30 @@ func (a *App) forward(c *gin.Context, protocol string) {
 			cancel()
 			log.Status, log.Error = resp.StatusCode, fmt.Sprintf("上游返回 HTTP %d", resp.StatusCode)
 			trace.endAttempt(log.Status, log.Error)
-			if resp.StatusCode == 400 || resp.StatusCode == 422 {
+			if resp.StatusCode == 400 || resp.StatusCode == 422 || resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != 401 && resp.StatusCode != 403 && resp.StatusCode != 404 && resp.StatusCode != 408 && resp.StatusCode != 429 {
 				fail(c, log.Status, log.Error)
 				return
 			}
-			a.markRouteFailed(item.Route, item.Channel, resp.StatusCode, resp.Header, log.Error)
+			channelFailure := resp.StatusCode == 401 || resp.StatusCode == 403
+			if channelFailure {
+				excludedChannels[item.Channel.ID] = true
+			}
+			failure(item, probe, resp.StatusCode >= 500 || resp.StatusCode == 408, channelFailure, resp.Header)
 			continue
 		}
 		guard.attach(resp.Body)
 		resp.Body = guard
 		c.Set("upstream_guard", guard)
+		if group.Strategy == "priority" {
+			c.Set("upstream_committed", func() {
+				if !a.recordMemberSuccess(pickedGroup, item, probe) && releasePick != nil {
+					releasePick()
+				}
+				releasePick = nil
+			})
+		} else {
+			c.Set("upstream_committed", nil)
+		}
 		var result completion
 		if log.Stream {
 			result, err = a.pipeStream(c, resp, upstreamProtocol, protocol, log.Model, obj(body["stream_options"])["include_usage"] == true, &timings)
@@ -358,26 +448,50 @@ func (a *App) forward(c *gin.Context, protocol string) {
 		cancel()
 		a.recordRequestCost(&log, result, group, item.Route, item.Channel, rate)
 		if err == nil {
+			// 完成响应已成功写出，之后的连接关闭不再改变结果。
 			log.Status, log.Error = 200, ""
 			trace.endAttempt(log.Status, log.Error)
-			a.mu.Lock()
-			delete(a.health, item.Channel.ID)
-			delete(a.routeHealth, item.Route.ID)
-			a.mu.Unlock()
+			if !log.Stream || group.Strategy != "priority" {
+				if a.recordMemberSuccess(group, item, probe) {
+					releasePick = nil
+				}
+			}
 			return
 		}
 		log.Status, log.Error = 502, err.Error()
-		if c.Request.Context().Err() != nil {
+		if c.Request.Context().Err() != nil || responseWriter.writeErr != nil {
 			log.Status, log.Error = 499, "客户端已断开"
 			return
 		}
+		var processingErr responseProcessingError
+		localError := errors.As(err, &processingErr)
+		if localError {
+			log.Status = 500
+		}
+		if requestCtx.Err() != nil {
+			log.Status, log.Error = 504, "请求已达到总时间上限"
+		}
 		trace.endAttempt(log.Status, log.Error)
-		a.markFailed(item.Channel, log.Error)
+		if !localError && requestCtx.Err() == nil {
+			if c.Writer.Written() {
+				a.recordMemberFailure(group, item, false, nil, log.Status, log.Error)
+			} else {
+				failure(item, probe, true, false, nil)
+			}
+		}
 		if c.Writer.Written() {
 			if log.Stream {
-				_ = writeFrame(c.Writer, "error", jsonString(object{"type": "error", "error": object{"type": "upstream_error", "message": log.Error}}))
+				errorType := "upstream_error"
+				if localError || requestCtx.Err() != nil {
+					errorType = "ledgergate_error"
+				}
+				_ = writeFrame(c.Writer, "error", jsonString(object{"type": "error", "error": object{"type": errorType, "message": log.Error}}))
 				c.Writer.Flush()
 			}
+			return
+		}
+		if localError {
+			fail(c, log.Status, log.Error)
 			return
 		}
 	}
@@ -393,8 +507,11 @@ func (a *App) forward(c *gin.Context, protocol string) {
 func (a *App) pipeResponse(c *gin.Context, resp *http.Response, from, to, model string) (completion, error) {
 	result := completion{}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, (32<<20)+1))
-	if err != nil || len(raw) > 32<<20 {
-		return result, errors.New("上游响应读取失败或超过 32 MiB")
+	if err != nil {
+		return result, errors.New("上游响应读取失败")
+	}
+	if len(raw) > 32<<20 {
+		return result, responseProcessingError("上游响应超过 32 MiB")
 	}
 	value, err := decodeJSON(raw)
 	if err != nil {
@@ -410,8 +527,8 @@ func (a *App) pipeResponse(c *gin.Context, resp *http.Response, from, to, model 
 		}
 		result.applyUsage(body, from)
 		body["model"] = model
-		c.JSON(200, body)
-		return result, nil
+		c.Status(200)
+		return result, (render.JSON{Data: body}).Render(c.Writer)
 	}
 	result, err = parseCompletion(body, from)
 	if err != nil {
@@ -421,8 +538,8 @@ func (a *App) pipeResponse(c *gin.Context, resp *http.Response, from, to, model 
 	if err != nil {
 		return result, err
 	}
-	c.JSON(200, converted)
-	return result, nil
+	c.Status(200)
+	return result, (render.JSON{Data: converted}).Render(c.Writer)
 }
 
 func (a *App) pipeStream(c *gin.Context, resp *http.Response, from, to, model string, includeUsage bool, metrics ...*requestTimings) (completion, error) {
@@ -438,10 +555,13 @@ func (a *App) pipeStream(c *gin.Context, resp *http.Response, from, to, model st
 	for {
 		event, err := readEvent(scanner)
 		if err != nil {
+			if errors.Is(err, bufio.ErrTooLong) {
+				return result, responseProcessingError("单行 SSE 数据超过 4 MiB")
+			}
 			if errors.Is(err, io.EOF) {
 				return result, errors.New("上游流提前结束，缺少终止事件")
 			}
-			return result, errors.New("上游流读取失败或事件超过 4 MiB")
+			return result, errors.New("上游流读取失败")
 		}
 		deltas, done, err := inspectEvent(event, from, &result, from != to)
 		if err != nil {
@@ -456,17 +576,25 @@ func (a *App) pipeStream(c *gin.Context, resp *http.Response, from, to, model st
 			trace.mu.Unlock()
 			trace.usage(result)
 		}
-		if streamEventHasOutput(event, from) || done {
+		output := streamEventHasOutput(event, from)
+		if from == to {
+			output = streamEventStartsOutput(event, from)
+		}
+		if output || done {
 			if value, exists := c.Get("upstream_guard"); exists {
 				value.(*upstreamGuard).output()
 			}
 		} else if !committed {
-			pendingBytes += len(event.Data) + len(event.Event)
-			if pendingBytes > 1<<20 || len(pending) >= 1024 {
-				return result, errors.New("上游首输出之前的事件过多")
+			if from != to {
+				// 转换所需的 ID 和用量已提取，无须缓存不会转发的前置事件。
+				continue
 			}
-			pending = append(pending, event)
-			continue
+			pendingBytes += len(event.Data) + len(event.Event)
+			if pendingBytes <= 1<<20 && len(pending) < 1024 {
+				pending = append(pending, event)
+				continue
+			}
+			// 同协议缓冲达到上限后按序透传，继续保留首输出和空闲超时保护。
 		}
 		committed = true
 		c.Header("Content-Type", "text/event-stream; charset=utf-8")
@@ -502,7 +630,9 @@ func (a *App) pipeStream(c *gin.Context, resp *http.Response, from, to, model st
 			if err := writeFrame(c.Writer, event.Event, event.Data); err != nil {
 				return result, err
 			}
-			c.Writer.Flush()
+			if err := http.NewResponseController(c.Writer).Flush(); err != nil {
+				return result, err
+			}
 		} else {
 			pending = nil
 			if err := writer.start(result); err != nil {
@@ -513,6 +643,10 @@ func (a *App) pipeStream(c *gin.Context, resp *http.Response, from, to, model st
 					return result, err
 				}
 			}
+		}
+		if callback, ok := c.Get("upstream_committed"); ok && callback != nil {
+			callback.(func())()
+			c.Set("upstream_committed", nil)
 		}
 		for _, timings := range metrics {
 			if timings != nil {
@@ -526,7 +660,6 @@ func (a *App) pipeStream(c *gin.Context, resp *http.Response, from, to, model st
 				if err := writer.finish(&result); err != nil {
 					return result, err
 				}
-				c.Writer.Flush()
 			}
 			return result, nil
 		}

@@ -239,7 +239,7 @@ func TestFailoverAndNoReplayAfterStreamCommit(t *testing.T) {
 				if backupCalls.Load() != 0 || record.Status != 502 || record.Attempts != 1 || !strings.Contains(w.Body.String(), "event: error") {
 					t.Fatalf("stream replay or wrong log %+v %s", record, w.Body.String())
 				}
-			} else if backupCalls.Load() != 1 || record.Status != 200 || record.Attempts != 2 {
+			} else if backupCalls.Load() != 1 || record.Status != 200 || record.Attempts != 3 {
 				t.Fatalf("failover failed %+v", record)
 			}
 		})

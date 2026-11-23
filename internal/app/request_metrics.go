@@ -113,6 +113,7 @@ func streamEventHasOutput(event sseEvent, protocol string) bool {
 		return false
 	}
 	body := obj(value)
+	kind := event.kind(body)
 	if protocol == "openai" {
 		for _, item := range array(body["choices"]) {
 			delta := obj(obj(item)["delta"])
@@ -131,22 +132,41 @@ func streamEventHasOutput(event sseEvent, protocol string) bool {
 		return false
 	}
 	if protocol == "anthropic" {
-		if str(body["type"]) == "content_block_start" {
+		if kind == "content_block_start" {
 			block := obj(body["content_block"])
 			return str(block["text"]) != "" || str(block["thinking"]) != "" || str(block["type"]) == "tool_use" && str(block["name"]) != ""
 		}
-		if str(body["type"]) == "content_block_delta" {
+		if kind == "content_block_delta" {
 			delta := obj(body["delta"])
 			return str(delta["text"]) != "" || str(delta["thinking"]) != "" || str(delta["partial_json"]) != ""
 		}
 		return false
 	}
-	switch str(body["type"]) {
+	switch kind {
 	case "response.output_text.delta", "response.refusal.delta", "response.reasoning_text.delta", "response.reasoning_summary_text.delta", "response.function_call_arguments.delta":
 		return str(body["delta"]) != ""
-	case "response.output_item.added":
+	case "response.output_text.done", "response.reasoning_text.done", "response.reasoning_summary_text.done":
+		return str(body["text"]) != ""
+	case "response.refusal.done":
+		return str(body["refusal"]) != ""
+	case "response.function_call_arguments.done":
+		return str(body["arguments"]) != ""
+	case "response.content_part.added", "response.content_part.done", "response.reasoning_summary_part.added", "response.reasoning_summary_part.done":
+		part := obj(body["part"])
+		return str(part["text"]) != "" || str(part["refusal"]) != ""
+	case "response.output_item.added", "response.output_item.done":
 		item := obj(body["item"])
-		return str(item["type"]) == "function_call" && str(item["name"]) != ""
+		if str(item["type"]) == "function_call" && str(item["name"]) != "" {
+			return true
+		}
+		for _, field := range []string{"content", "summary"} {
+			for _, raw := range array(item[field]) {
+				part := obj(raw)
+				if str(part["text"]) != "" || str(part["refusal"]) != "" {
+					return true
+				}
+			}
+		}
 	}
 	return false
 }

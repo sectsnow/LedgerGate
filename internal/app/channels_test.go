@@ -222,6 +222,8 @@ func TestExistingDatabaseUpgrade(t *testing.T) {
 		`INSERT INTO accounts (id, name, kind, balance, used) VALUES (1, 'existing-account', 'sub2api', 69, 52)`,
 		`CREATE TABLE channels (id integer PRIMARY KEY, name text, account_id integer, base_url text, protocol text, api_key text, enabled numeric, timeout_seconds integer, cooldown_seconds integer)`,
 		`INSERT INTO channels (id, name, account_id, base_url, protocol, api_key, enabled, timeout_seconds, cooldown_seconds) VALUES (1, 'existing-channel', 1, 'https://example.invalid', 'responses', 'saved-ciphertext', 1, 120, 60)`,
+		`CREATE TABLE groups (id integer PRIMARY KEY, name text, strategy text, active_route_id integer)`,
+		`INSERT INTO groups (id, name, strategy, active_route_id) VALUES (1, 'existing-model', 'priority', 0)`,
 	} {
 		if err := db.Exec(statement).Error; err != nil {
 			t.Fatal(err)
@@ -252,5 +254,9 @@ func TestExistingDatabaseUpgrade(t *testing.T) {
 	}
 	if channel.AccountID == nil || *channel.AccountID != account.ID || channel.APIKey != "saved-ciphertext" || !reflect.DeepEqual(channel.supportedProtocols(), []string{"responses"}) {
 		t.Fatal("legacy channel corrupted during upgrade")
+	}
+	var group Group
+	if err := upgraded.DB.First(&group, 1).Error; err != nil || group.Name != "existing-model" || group.Strategy != "priority" || group.RelayConfig != nil || group.relayConfig() != (GroupRelayConfig{2, 3, 60, 300}) {
+		t.Fatal("legacy model or routing defaults corrupted during upgrade", err)
 	}
 }

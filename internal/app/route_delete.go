@@ -37,6 +37,7 @@ func (a *App) deleteGroupRoute(c *gin.Context) {
 		return
 	}
 	a.mu.Lock()
+	delete(a.groupRouting, id)
 	delete(a.weights, uint(routeID))
 	a.mu.Unlock()
 	c.Status(204)

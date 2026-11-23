@@ -73,21 +73,22 @@ type Channel struct {
 }
 
 type Group struct {
-	ID                uint          `json:"id" gorm:"primaryKey"`
-	Name              string        `json:"name" gorm:"uniqueIndex"`
-	Vendor            string        `json:"vendor" gorm:"not null;default:''"`
-	Strategy          string        `json:"strategy"`
-	ActiveRouteID     uint          `json:"active_route_id" gorm:"not null;default:0"`
-	InputPriceMicros  int64         `json:"input_price_micros"`
-	OutputPriceMicros int64         `json:"output_price_micros"`
-	PriceMode         string        `json:"price_mode" gorm:"not null;default:''"`
-	PriceModel        string        `json:"price_model" gorm:"not null;default:''"`
-	PriceSource       string        `json:"price_source" gorm:"not null;default:''"`
-	PriceSourceModel  string        `json:"price_source_model" gorm:"not null;default:''"`
-	PriceSyncError    string        `json:"price_sync_error" gorm:"not null;default:''"`
-	PriceUpdatedAt    *time.Time    `json:"price_updated_at"`
-	Pricing           *modelPricing `json:"pricing" gorm:"serializer:json;type:text"`
-	Routes            []Route       `json:"routes" gorm:"foreignKey:GroupID"`
+	ID                uint              `json:"id" gorm:"primaryKey"`
+	Name              string            `json:"name" gorm:"uniqueIndex"`
+	Vendor            string            `json:"vendor" gorm:"not null;default:''"`
+	Strategy          string            `json:"strategy"`
+	ActiveRouteID     uint              `json:"active_route_id" gorm:"not null;default:0"`
+	RelayConfig       *GroupRelayConfig `json:"relay_config" gorm:"serializer:json;type:text"`
+	InputPriceMicros  int64             `json:"input_price_micros"`
+	OutputPriceMicros int64             `json:"output_price_micros"`
+	PriceMode         string            `json:"price_mode" gorm:"not null;default:''"`
+	PriceModel        string            `json:"price_model" gorm:"not null;default:''"`
+	PriceSource       string            `json:"price_source" gorm:"not null;default:''"`
+	PriceSourceModel  string            `json:"price_source_model" gorm:"not null;default:''"`
+	PriceSyncError    string            `json:"price_sync_error" gorm:"not null;default:''"`
+	PriceUpdatedAt    *time.Time        `json:"price_updated_at"`
+	Pricing           *modelPricing     `json:"pricing" gorm:"serializer:json;type:text"`
+	Routes            []Route           `json:"routes" gorm:"foreignKey:GroupID"`
 }
 
 type Route struct {

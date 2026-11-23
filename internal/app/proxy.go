@@ -24,6 +24,10 @@ type proxySettings struct {
 	HasPassword bool   `json:"has_password"`
 }
 
+type upstreamConnectionError string
+
+func (err upstreamConnectionError) Error() string { return string(err) }
+
 type proxyInput struct {
 	Enabled       bool   `json:"enabled"`
 	Protocol      string `json:"protocol"`
@@ -211,9 +215,9 @@ func (a *App) doRequest(req *http.Request, useProxy bool) (*http.Response, error
 	resp, err := client.Do(req)
 	if err != nil {
 		if client != a.client {
-			return nil, errors.New("代理连接失败或超时，请检查代理地址、认证及目标连通性")
+			return nil, upstreamConnectionError("代理连接失败或超时，请检查代理地址、认证及目标连通性")
 		}
-		return nil, errors.New("上游连接失败或超时")
+		return nil, upstreamConnectionError("上游连接失败或超时")
 	}
 	if client != a.client && resp.StatusCode == http.StatusProxyAuthRequired {
 		resp.Body.Close()

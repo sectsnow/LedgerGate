@@ -16,7 +16,7 @@ func TestRoute404DoesNotCoolOtherModelsAndRetryAfter(t *testing.T) {
 	a := testApp(t)
 	channel := Channel{ID: 42, CooldownSeconds: 10}
 	missing, healthy := Route{ID: 1, ChannelID: 42}, Route{ID: 2, ChannelID: 42}
-	a.markRouteFailed(missing, channel, 404, http.Header{}, "unknown model")
+	a.recordMemberFailure(Group{}, candidate{missing, channel}, false, http.Header{}, 404, "unknown model")
 	if len(a.health) != 0 {
 		t.Fatal("model failure cooled the whole channel")
 	}
@@ -26,8 +26,8 @@ func TestRoute404DoesNotCoolOtherModelsAndRetryAfter(t *testing.T) {
 	if _, ok := a.pick([]candidate{{missing, channel}}, "priority", nil); ok {
 		t.Fatal("missing model was not cooled")
 	}
-	a.markRouteFailed(healthy, channel, 429, http.Header{"Retry-After": []string{"120"}}, "rate limited")
-	if time.Until(a.health[channel.ID].Until) < 119*time.Second {
+	a.recordMemberFailure(Group{}, candidate{healthy, channel}, false, http.Header{"Retry-After": []string{"120"}}, 429, "rate limited")
+	if time.Until(a.routeHealth[healthy.ID].Until) < 119*time.Second {
 		t.Fatal("Retry-After ignored")
 	}
 	if got := retryAfter("99999999", time.Now(), time.Second); time.Until(got) > time.Hour {

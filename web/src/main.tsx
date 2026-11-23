@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { version } from "../package.json";
 import {
   Activity,
   ArrowDownLeft,
@@ -637,7 +638,7 @@ function App() {
         <div className="sidebar-bottom">
           <div className="connection">
             <i />
-            本地控制台<span>v0.1</span>
+            本地控制台<span title={`LedgerGate v${version}`}>v{version}</span>
           </div>
           <button
             onClick={() =>
@@ -873,7 +874,7 @@ function App() {
                 <MonitorHistory key={current.id} mode={current.id as "alerts" | "rate-changes" | "announcements"} accounts={data.accounts} revision={data} dialog={Dialog} />
               )}
               {current.id === "settings" && (
-                <><ThemePicker value={theme} change={setTheme} /><AdminPasswordPanel /><ProxySettings key={settingsRevision} /><NotificationPanel key={`notifications-${settingsRevision}`} accounts={data.accounts} defaultRetries={data.settings.runtime.notification_retries} dialog={Dialog} field={Field} /><SettingsForm key={settingsRevision} settings={data.settings} run={run} /><DataTransferPanel changed={async settingsImported => { await refresh(); if (settingsImported) setSettingsRevision(value => value + 1); }} /><BackupPanel /></>
+                <><ThemePicker value={theme} change={setTheme} /><AdminPasswordPanel /><ProxySettings key={settingsRevision} /><NotificationPanel key={`notifications-${settingsRevision}`} accounts={data.accounts} defaultRetries={data.settings.runtime.notification_retries} dialog={Dialog} field={Field} /><SettingsForm key={settingsRevision} settings={data.settings} run={run} /><DataTransferPanel changed={async settingsImported => { await refresh(); if (settingsImported) setSettingsRevision(value => value + 1); }} /><BackupPanel dialog={Dialog} /></>
               )}
             </>
           )}
@@ -3742,6 +3743,7 @@ function GroupForm({
   const [priceMode, setPriceMode] = useState(group?.price_mode || "auto");
   const [priceModel, setPriceModel] = useState(group?.price_model || "");
   const [strategy, setStrategy] = useState(group?.strategy || "manual");
+  const [relayConfig, setRelayConfig] = useState(group?.relay_config || { member_max_attempts: 2, member_retry_interval_seconds: 3, member_cooldown_seconds: 60, member_affinity_seconds: 300 });
   const [activeRouteIndex, setActiveRouteIndex] = useState(() =>
     Math.max(
       0,
@@ -3791,6 +3793,7 @@ function GroupForm({
                 price_mode: priceMode,
                 price_model: priceModel,
                 strategy,
+                relay_config: relayConfig,
                 input_price_micros: Math.round(inputPrice * 1e6),
                 output_price_micros: Math.round(outputPrice * 1e6),
                 pricing: {
@@ -3835,6 +3838,12 @@ function GroupForm({
               ))}
             </select>
           </Field>
+          {strategy === "priority" && <fieldset className="full group-relay-config"><legend>故障转移设置</legend><div className="form-grid">
+            <Field label="单成员总尝试次数" hint="包含首次请求；耗尽后再切换其他成员。"><input type="number" required min={1} max={32} value={relayConfig.member_max_attempts} onChange={event => setRelayConfig({ ...relayConfig, member_max_attempts: Number(event.target.value) })} /></Field>
+            <Field label="同成员重试间隔（秒）" hint="等待和每次尝试都计入整次请求预算。"><input type="number" required min={1} max={3600} value={relayConfig.member_retry_interval_seconds} onChange={event => setRelayConfig({ ...relayConfig, member_retry_interval_seconds: Number(event.target.value) })} /></Field>
+            <Field label="成员失败冷却（秒）" hint="尝试耗尽后暂时跳过该成员。"><input type="number" required min={1} max={3600} value={relayConfig.member_cooldown_seconds} onChange={event => setRelayConfig({ ...relayConfig, member_cooldown_seconds: Number(event.target.value) })} /></Field>
+            <Field label="切换后亲和时间（秒）" hint="备用成员成功后保持使用；0 表示关闭。"><input type="number" required min={0} max={86400} value={relayConfig.member_affinity_seconds} onChange={event => setRelayConfig({ ...relayConfig, member_affinity_seconds: Number(event.target.value) })} /></Field>
+          </div></fieldset>}
           <Field label="模型厂商" hint="可手动填写，留空时根据模型名称识别。">
             <input list="model-vendor-options" value={vendor} onChange={event => setVendor(event.target.value)} placeholder="自动识别" />
             <datalist id="model-vendor-options">
@@ -3996,7 +4005,7 @@ function GroupForm({
             ? "固定使用选中的上游路由，可在模型列表中手动切换。上游故障时需选择其他路由。"
             : strategy === "weighted"
               ? "健康渠道按权重分摊请求。例如权重 3 和 1 对应约 75% 与 25%。"
-              : "优先级数字越小越优先。失败后切换其他渠道，冷却结束后重新尝试。"}
+              : "优先级数字越小越优先。临时失败先重试当前成员，耗尽后再切换；备用成功后保持亲和，期满只允许单个请求探测恢复。"}
         </p>
         {error && (
           <p className="form-error" role="alert">

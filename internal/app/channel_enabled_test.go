@@ -94,9 +94,9 @@ func TestFailoverSkipsChannelDisabledDuringRequest(t *testing.T) {
 	h := a.Router()
 	cookie := loginForTest(t, h)
 	entered, release := make(chan struct{}), make(chan struct{})
-	var unblock sync.Once
+	var unblock, enteredOnce sync.Once
 	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		close(entered)
+		enteredOnce.Do(func() { close(entered) })
 		<-release
 		w.WriteHeader(503)
 	}))
