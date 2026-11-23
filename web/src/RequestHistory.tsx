@@ -4,6 +4,7 @@ import { api, protocolNames, type ChannelRow, type RequestDetail, type RequestLo
 import RequestMetrics from "./RequestMetrics";
 import JsonBody from "./JsonBody";
 import { attemptStatusLabel, requestEndLabel } from "./requestEnd";
+import { requestTiming } from "./requestTiming";
 
 type DialogComponent = ComponentType<{ title: string; children: ReactNode; close: () => void }>;
 const stateNames: Record<string, string> = { running: "请求中", streaming: "响应中", completed: "已完成", failed: "失败", cancelled: "已取消", interrupted: "已中断" };
@@ -41,15 +42,18 @@ function Detail({ id, dialog: Dialog, close }: { id: number; dialog: DialogCompo
   }, [id]);
   const row = value?.request;
   const payload = value?.detail;
+  const firstContent = row ? requestTiming(row).firstContentMS : null;
   return <Dialog title="请求详情" close={close}>
     <div className="request-detail">
       {error && <p className="form-error" role="alert">{error}</p>}
       {!row ? !error && <p role="status">正在读取请求详情…</p> : <>
         <div className="request-detail-heading"><div><strong>{row.model || "无模型"}</strong><code>请求编号：{row.request_id}</code></div><State row={row} /></div>
         <RequestMetrics row={row} />
-        <p className="field-hint">首字节耗时：{row.first_byte_ms == null ? "—" : seconds(row.first_byte_ms)} · {row.started_at ? "开始" : "记录"}于 {date(row.started_at || row.created_at)} · 结束于 {date(row.finished_at)}</p>
+        <p className="field-hint">首字节耗时：{row.first_byte_ms == null ? "—" : seconds(row.first_byte_ms)} · <span title="从收到请求到收到首段正文、公开思考文本或工具内容；加密思考不等同于可见内容。">首内容：{firstContent == null ? row.stream ? "未记录" : "不适用" : seconds(firstContent)}</span> · <span title="从首内容到上游流结束；整包返回时无法据此推算模型生成速度。">输出阶段耗时：{row.generation_ms == null ? row.stream ? "未记录" : "不适用" : seconds(row.generation_ms)}</span></p>
+        <p className="field-hint">{row.started_at ? "开始" : "记录"}于 {date(row.started_at || row.created_at)} · 结束于 {date(row.finished_at)}</p>
         {row.error && <p className="form-error">{row.error}</p>}
         {row.routing_reason && <p className="field-hint">选路说明：{row.routing_reason}{row.retry_at && ` · 预计重试于 ${date(row.retry_at)}`}</p>}
+        {row.finish_reason === "stop" && <p className="field-hint">上游结束原因：{requestEndLabel(row.finish_reason, row.incomplete_reason)}</p>}
         {row.cost_warning && <p className="field-hint">计价说明：{row.cost_warning}</p>}
         {payload?.attempts.length ? <section className="request-attempts"><h3>上游尝试</h3><ol>{payload.attempts.map((attempt, index) => <li key={index}>
           <div><strong>{attempt.channel_name || `渠道 #${attempt.channel_id}`}</strong><code>{attempt.model}</code><small>{protocolNames[attempt.protocol] || attempt.protocol}</small></div>
