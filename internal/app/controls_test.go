@@ -88,7 +88,7 @@ func TestNotificationFiltersAndBusinessFailure(t *testing.T) {
 	}
 }
 
-func TestDiscoveryDoesNotReplaceSelectedModelsAndQualityUsesRetainedLogs(t *testing.T) {
+func TestDiscoveryDoesNotReplaceSelectedModelsAndQualityUsesSummaries(t *testing.T) {
 	a := testApp(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"data":[{"id":"new-model"},{"id":"kept-model"}]}`)
@@ -108,7 +108,7 @@ func TestDiscoveryDoesNotReplaceSelectedModelsAndQualityUsesRetainedLogs(t *test
 	}
 	now := time.Now().Add(-time.Minute)
 	rows := []RequestLog{{ChannelID: channel.ID, ChannelName: channel.Name, Model: "public", Status: 200, State: "completed", CreatedAt: now, InputTokens: 20, OutputTokens: 10, CostMicros: 40, FirstTokenMS: intPointer(100), GenerationMS: intPointer(1000), DurationMS: 1100}, {ChannelID: channel.ID, ChannelName: channel.Name, Model: "public", Status: 500, State: "failed", CreatedAt: now, DurationMS: 100}, {ChannelID: channel.ID, Model: "public", State: "running", CreatedAt: now}}
-	a.DB.Create(&rows)
+	requestUsageForTest(t, a, rows)
 	h := a.Router()
 	cookie := loginForTest(t, h)
 	response := call(h, "GET", "/api/request-quality?group_by=model", "", cookie)

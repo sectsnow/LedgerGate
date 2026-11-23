@@ -16,12 +16,20 @@ func TestRequestHistoryActiveFirstBeforePagination(t *testing.T) {
 		{RequestID: "old-streaming", State: "streaming"},
 		{RequestID: "failed", State: "failed", Status: 502},
 		{RequestID: "cancelled", State: "cancelled", Status: 499},
-		{RequestID: "interrupted", State: "interrupted", Status: 502},
+		{RequestID: "another-failed", State: "failed", Status: 502},
 		{RequestID: "legacy-completed", Status: 200},
 		{RequestID: "newest-completed", State: "completed", Status: 200},
 	}
-	if err := a.DB.Create(&rows).Error; err != nil {
-		t.Fatal(err)
+	for i := range rows {
+		rows[i].ID = uint(i + 1)
+		if activeRequest(rows[i].State) {
+			if a.activeRequests == nil {
+				a.activeRequests = map[uint]*requestTrace{}
+			}
+			a.activeRequests[rows[i].ID] = &requestTrace{log: rows[i]}
+		} else {
+			a.cacheFinishedRequest(rows[i], requestPayload{Attempts: []requestAttempt{}})
+		}
 	}
 	for _, test := range []struct {
 		name, path string
@@ -64,8 +72,11 @@ func TestRequestHistoryActiveFirstBeforePagination(t *testing.T) {
 			}
 		})
 	}
-	if err := a.DB.Model(&RequestLog{}).Where("id IN ?", []uint{rows[0].ID, rows[2].ID}).Updates(map[string]any{"state": "completed", "status": 200}).Error; err != nil {
-		t.Fatal(err)
+	for _, index := range []int{0, 2} {
+		trace := a.activeRequests[rows[index].ID]
+		trace.log.State, trace.log.Status = "completed", 200
+		a.cacheFinishedRequest(trace.log, requestPayload{Attempts: []requestAttempt{}})
+		delete(a.activeRequests, rows[index].ID)
 	}
 	response := call(h, "GET", "/api/requests", "", cookie)
 	var completed []RequestLog

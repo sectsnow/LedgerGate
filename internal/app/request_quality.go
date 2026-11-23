@@ -22,7 +22,7 @@ type qualityRow struct {
 
 func (a *App) requestQuality(c *gin.Context) {
 	now := time.Now()
-	start, end := now.Add(-24*time.Hour), now
+	start, end := now.Truncate(time.Hour).Add(-23*time.Hour), now
 	if c.Query("start") != "" || c.Query("end") != "" {
 		location := usageDay(now).Location()
 		var err error
@@ -51,15 +51,15 @@ func (a *App) requestQuality(c *gin.Context) {
 		return
 	}
 	rows := []qualityRow{}
-	query := a.DB.WithContext(c.Request.Context()).Model(&RequestLog{}).
-		Where("julianday(created_at)>=julianday(?) AND julianday(created_at)<julianday(?) AND state NOT IN ('running','streaming')", start, end).
-		Select(id + " AS id, " + label + ` AS name, COUNT(*) AS requests,
-            SUM(CASE WHEN status>=200 AND status<400 THEN 1 ELSE 0 END) AS successes,
+	query := a.DB.WithContext(c.Request.Context()).Model(&RequestHour{}).
+		Where("hour >= ? AND hour < ?", start.Unix()/3600*3600, end.Unix()).
+		Select(id + " AS id, " + label + ` AS name, SUM(requests) AS requests,
+            SUM(successes) AS successes,
             COALESCE(SUM(input_tokens),0) AS input_tokens, COALESCE(SUM(output_tokens),0) AS output_tokens,
-            COALESCE(SUM(CASE WHEN cost_status='unknown' THEN 0 ELSE cost_micros END),0) AS cost_micros,
-            SUM(CASE WHEN cost_status='unknown' THEN 1 ELSE 0 END) AS unknown_costs,
-            AVG(duration_ms) AS average_duration_ms, AVG(first_token_ms) AS average_first_token_ms,
-            1000.0*SUM(CASE WHEN generation_ms>0 THEN output_tokens ELSE 0 END)/NULLIF(SUM(CASE WHEN generation_ms>0 THEN generation_ms ELSE 0 END),0) AS output_per_second`).
+			COALESCE(SUM(cost_micros),0) AS cost_micros, SUM(cost_unknown_requests) AS unknown_costs,
+			1.0*SUM(duration_ms)/NULLIF(SUM(requests),0) AS average_duration_ms,
+			1.0*SUM(first_token_ms)/NULLIF(SUM(first_token_count),0) AS average_first_token_ms,
+			1000.0*SUM(generation_tokens)/NULLIF(SUM(generation_ms),0) AS output_per_second`).
 		Group(group).Order("requests DESC").Limit(500)
 	if err := query.Scan(&rows).Error; err != nil {
 		fail(c, 500, "读取渠道与模型统计失败")

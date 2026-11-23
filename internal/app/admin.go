@@ -30,7 +30,7 @@ func (a *App) Router() http.Handler {
 		c.Header("X-Frame-Options", "DENY")
 		bodyLimit := int64(32 << 20)
 		if c.Request.URL.Path == "/api/backup/restore" {
-			bodyLimit = backup.Limit + (1 << 20)
+			bodyLimit = backup.FileLimit + (1 << 20)
 		}
 		if c.Request.URL.Path == "/api/login" || c.Request.URL.Path == "/api/setup" || c.Request.URL.Path == "/api/admin/password" {
 			bodyLimit = 4096
@@ -106,6 +106,7 @@ func (a *App) Router() http.Handler {
 	api.POST("/channels/:id/models", a.syncModels)
 	api.GET("/channels/:id/models/available", a.previewChannelModels)
 	api.PUT("/channels/:id/models", a.saveChannelModelSelection)
+	api.POST("/channels/:id/models/acknowledge", a.acknowledgeChannelModels)
 	api.GET("/channels/:id/model-tests/models", a.channelTestModels)
 	api.POST("/channels/:id/model-tests/models", a.channelTestModels)
 	api.POST("/channels/:id/model-tests", a.testChannelModel)
@@ -205,8 +206,6 @@ func (a *App) Router() http.Handler {
 		c.Status(204)
 	})
 	api.GET("/requests", a.listRequests)
-	api.POST("/requests/clear/preview", a.previewRequestClear)
-	api.POST("/requests/clear", a.clearRequests)
 	api.GET("/request-quality", a.requestQuality)
 	api.GET("/requests/:id", a.requestDetail)
 	api.GET("/alerts", a.listAlerts)
@@ -218,7 +217,7 @@ func (a *App) Router() http.Handler {
 			return
 		}
 		c.JSON(200, gin.H{"sync_tasks": a.syncTaskList(), "runtime": setting.RuntimeOptions, "telegram_chat_id": setting.TelegramChatID, "has_telegram_token": setting.TelegramToken != "", "webhook_url": setting.WebhookURL, "has_webhook_secret": setting.WebhookSecret != "", "alert_cooldown_minutes": setting.AlertCooldownMinutes, "retention_days": setting.RetentionDays,
-			"request_body_retention_days": setting.RequestBodyRetentionDays, "request_retention_days": setting.RequestRetentionDays, "request_summary_retention_days": setting.RequestSummaryRetentionDays})
+			"request_summary_retention_days": setting.RequestSummaryRetentionDays})
 	})
 	api.PUT("/settings", a.saveSettings)
 	api.POST("/settings/test", a.testWebhook)
@@ -539,7 +538,7 @@ func (a *App) channels(c *gin.Context) {
 			}
 		}
 		paused := item.AccountID != nil && !active[*item.AccountID]
-		result = append(result, gin.H{"channel": item, "monitoring_paused": paused, "cooldown_until": state.Until, "last_error": state.Error, "has_key": item.APIKey != "", "rate": rate, "rate_stale": rateStale})
+		result = append(result, gin.H{"channel": item, "models_revision": channelModelDiscoveryRevision(item), "monitoring_paused": paused, "cooldown_until": state.Until, "last_error": state.Error, "has_key": item.APIKey != "", "rate": rate, "rate_stale": rateStale})
 	}
 	c.JSON(200, result)
 }
@@ -609,6 +608,7 @@ func (a *App) saveChannel(c *gin.Context) {
 		fail(c, 400, "更换上游地址时请重新填写 API Key")
 		return
 	}
+	original := channel
 	originalEnabled, originalAutoReason := channel.Enabled, channel.AutoDisabledReason
 	sameAccount := channel.AccountID == nil && input.AccountID == nil || channel.AccountID != nil && input.AccountID != nil && *channel.AccountID == *input.AccountID
 	if channel.Enabled != input.Enabled || !sameAccount || channel.BaseURL != base || input.APIKey != "" {
@@ -642,6 +642,10 @@ func (a *App) saveChannel(c *gin.Context) {
 		fail(c, 400, "请输入上游 API Key")
 		return
 	}
+	sourceChanged := channel.BaseURL != original.BaseURL || channel.APIKey != original.APIKey || channel.UseProxy != original.UseProxy || !slices.Equal(channel.supportedProtocols(), original.supportedProtocols())
+	if sourceChanged {
+		channel.DiscoveredModels, channel.ModelsBaseline, channel.ModelsSyncError, channel.ModelsCheckedAt = "", "", "", nil
+	}
 	if input.Models != nil {
 		models, err := normalizeChannelModels(*input.Models)
 		if err != nil {
@@ -658,11 +662,16 @@ func (a *App) saveChannel(c *gin.Context) {
 		err = a.DB.Create(&channel).Error
 	} else {
 		query := a.DB.Model(&Channel{}).Where("id = ? AND enabled = ? AND COALESCE(auto_disabled_reason, '') = ?", channel.ID, originalEnabled, originalAutoReason).Select("*").Omit("id", "created_at")
+		omit := []string{"id", "created_at"}
+		if !sourceChanged {
+			omit = append(omit, "discovered_models", "models_baseline", "models_sync_error", "models_checked_at")
+		}
 		if input.Models == nil {
-			query = query.Omit("id", "created_at", "models")
+			omit = append(omit, "models")
 		} else {
 			query = query.Where("COALESCE(models, '') = ?", *input.ExpectedModels)
 		}
+		query = query.Omit(omit...)
 		result := query.Updates(&channel)
 		err = result.Error
 		if err == nil && result.RowsAffected == 0 {
@@ -853,8 +862,6 @@ func (a *App) saveSettings(c *gin.Context) {
 		ClearWebhookSecret          bool            `json:"clear_webhook_secret"`
 		AlertCooldownMinutes        int             `json:"alert_cooldown_minutes"`
 		RetentionDays               int             `json:"retention_days"`
-		RequestBodyRetentionDays    *int            `json:"request_body_retention_days"`
-		RequestRetentionDays        *int            `json:"request_retention_days"`
 		RequestSummaryRetentionDays *int            `json:"request_summary_retention_days"`
 	}
 	if c.ShouldBindJSON(&input) != nil || input.AlertCooldownMinutes < 1 || input.AlertCooldownMinutes > 10080 || input.RetentionDays < 1 || input.RetentionDays > 365 {
@@ -899,12 +906,6 @@ func (a *App) saveSettings(c *gin.Context) {
 	if input.ClearTelegramToken {
 		setting.TelegramToken = ""
 	}
-	if input.RequestBodyRetentionDays != nil {
-		setting.RequestBodyRetentionDays = *input.RequestBodyRetentionDays
-	}
-	if input.RequestRetentionDays != nil {
-		setting.RequestRetentionDays = *input.RequestRetentionDays
-	}
 	if input.RequestSummaryRetentionDays != nil {
 		setting.RequestSummaryRetentionDays = *input.RequestSummaryRetentionDays
 	}
@@ -935,7 +936,9 @@ func (a *App) overview(c *gin.Context) {
 		CostMicros          int64 `json:"cost_micros"`
 		CostUnknownRequests int64 `json:"cost_unknown_requests"`
 	}
-	err := a.DB.Model(&RequestLog{}).Where("created_at > ?", now.Add(-24*time.Hour)).Select("COUNT(*) AS requests, COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0) AS errors, COALESCE(SUM(input_tokens), 0) AS input_tokens, COALESCE(SUM(output_tokens), 0) AS output_tokens, COALESCE(SUM(cost_micros), 0) AS cost_micros, COALESCE(SUM(CASE WHEN cost_status = 'unknown' THEN 1 ELSE 0 END), 0) AS cost_unknown_requests").Scan(&result).Error
+	// 按当前小时及之前 23 个小时统计，与请求趋势使用相同的小时桶。
+	start := now.Truncate(time.Hour).Add(-23 * time.Hour).Unix()
+	err := a.DB.Model(&RequestHour{}).Where("hour >= ? AND hour <= ?", start, now.Unix()).Select("COALESCE(SUM(requests), 0) AS requests, COALESCE(SUM(errors), 0) AS errors, COALESCE(SUM(input_tokens), 0) AS input_tokens, COALESCE(SUM(output_tokens), 0) AS output_tokens, COALESCE(SUM(cost_micros), 0) AS cost_micros, COALESCE(SUM(cost_unknown_requests), 0) AS cost_unknown_requests").Scan(&result).Error
 	if err != nil {
 		fail(c, 500, "读取统计失败")
 		return
@@ -944,7 +947,7 @@ func (a *App) overview(c *gin.Context) {
 		Hour     int64 `json:"hour"`
 		Requests int64 `json:"requests"`
 	}{}
-	if err := a.DB.Model(&RequestLog{}).Where("created_at > ?", now.Add(-24*time.Hour)).Select("(CAST(strftime('%s', created_at) AS INTEGER) / 3600) * 3600 AS hour, COUNT(*) AS requests").Group("hour").Order("hour").Scan(&series).Error; err != nil {
+	if err := a.DB.Model(&RequestHour{}).Where("hour >= ? AND hour <= ?", start, now.Unix()).Select("hour, SUM(requests) AS requests").Group("hour").Order("hour").Scan(&series).Error; err != nil {
 		fail(c, 500, "读取请求趋势失败")
 		return
 	}

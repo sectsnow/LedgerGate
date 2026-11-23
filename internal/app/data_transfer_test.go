@@ -205,6 +205,9 @@ func TestDataTransferCrossInstanceRoundTripPreviewAndDuplicateSkip(t *testing.T)
 	}
 	var setting Setting
 	target.DB.First(&setting, 1)
+	if !setting.RequestHistoryMigrated {
+		t.Fatal("configuration import reset the completed request migration")
+	}
 	if !reflect.DeepEqual(setting.NotificationAccounts, []uint{account.ID}) || setting.MonitorConcurrency != 3 {
 		t.Fatal("settings references were not remapped")
 	}

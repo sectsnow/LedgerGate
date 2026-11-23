@@ -177,8 +177,7 @@ func TestWeightedRoutingThroughAPI(t *testing.T) {
 	if counts[0].Load() != 30 || counts[1].Load() != 10 {
 		t.Fatalf("weighted distribution %d/%d", counts[0].Load(), counts[1].Load())
 	}
-	var records []RequestLog
-	a.DB.Find(&records)
+	records, _ := a.requestSummaries()
 	if len(records) != 40 || records[0].CostMicros != 600 || records[0].Attempts != 1 {
 		t.Fatalf("bad accounting %+v", records[0])
 	}
@@ -233,8 +232,7 @@ func TestFailoverAndNoReplayAfterStreamCommit(t *testing.T) {
 			if w.Code != 200 {
 				t.Fatalf("%d %s", w.Code, w.Body.String())
 			}
-			var record RequestLog
-			a.DB.Last(&record)
+			record := latestRequestForTest(t, a)
 			if mode == "late_stream_error" {
 				if backupCalls.Load() != 0 || record.Status != 502 || record.Attempts != 1 || !strings.Contains(w.Body.String(), "event: error") {
 					t.Fatalf("stream replay or wrong log %+v %s", record, w.Body.String())
@@ -437,8 +435,7 @@ func TestStreamingMatrixThroughGateway(t *testing.T) {
 				if text.String() != "你好" || arguments.String() != `{"city":"北京"}` || result.Input != 12 || result.Output != 7 {
 					t.Fatalf("stream semantics lost %s %s %+v", text.String(), arguments.String(), result)
 				}
-				var record RequestLog
-				a.DB.Last(&record)
+				record := latestRequestForTest(t, a)
 				if record.Status != 200 || record.InputTokens != 12 || record.OutputTokens != 7 {
 					t.Fatalf("bad stream accounting %+v", record)
 				}

@@ -15,8 +15,8 @@ export default function BackupPanel({ dialog: Dialog }: { dialog: DialogComponen
   const [restoring, setRestoring] = useState(false);
   function chooseFile(next: File | null) {
     setRestoreError(""); setFile(null);
-    if (next && (!next.name.toLowerCase().endsWith(".lgb") || next.size > 256 * 1024 * 1024 + 48)) {
-      setRestoreError("请选择不超过 256 MiB 的 .lgb 备份文件。"); return;
+    if (next && (!next.name.toLowerCase().endsWith(".lgb") || next.size > 4 * 1024 ** 3 + 1024 ** 2)) {
+      setRestoreError("请选择不超过 4 GiB 的 .lgb 备份文件。"); return;
     }
     setFile(next);
   }
@@ -34,7 +34,7 @@ export default function BackupPanel({ dialog: Dialog }: { dialog: DialogComponen
     } catch (error) { setRestoreError((error as Error).message); }
     finally { setRestoring(false); setConfirming(false); }
   }
-  return <section className="panel backup-panel"><div className="panel-heading"><div><h2>备份与恢复</h2><p>下载加密备份，包含一致性数据库快照、解密主密钥与管理员密码。</p></div></div>
+  return <section className="panel backup-panel"><div className="panel-heading"><div><h2>备份与恢复</h2><p>下载加密备份，包含配置、用量统计、解密主密钥与管理员密码。内存中的近期请求及正文不随备份保存。</p></div></div>
     <form className="backup-controls" onSubmit={async event => {
       event.preventDefault(); setBusy(true); setError("");
       try {
@@ -58,7 +58,7 @@ export default function BackupPanel({ dialog: Dialog }: { dialog: DialogComponen
         if (bytes < 12 || bytes > 256) { setRestoreError("备份密码须为 12–256 字节。"); return; }
         setConfirming(true);
       }}>
-        <p>上传 .lgb 完整备份，校验通过后替换当前数据。恢复前会保留原数据，成功后需要重新登录。</p>
+        <p>选择或拖入不超过 4 GiB 的 .lgb 完整备份，输入创建备份时的密码。校验通过后替换当前数据，恢复前会保留原数据，成功后需要重新登录。旧版备份中的请求明细会先归档，再转换为用量统计。</p>
         <div className="transfer-dropzone" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); if (!busy && !restoring) chooseFile(event.dataTransfer.files[0] || null); }}>
           <label htmlFor={`${id}-file`}>选择或拖入 .lgb 备份文件</label><input id={`${id}-file`} type="file" accept=".lgb" disabled={busy || restoring} onChange={event => chooseFile(event.target.files?.[0] || null)} />
           {file && <p>{file.name} · {(file.size / 1024 / 1024).toFixed(2)} MiB</p>}
@@ -69,8 +69,8 @@ export default function BackupPanel({ dialog: Dialog }: { dialog: DialogComponen
       </form>
     </details>
     {confirming && <Dialog title="确认恢复完整备份" close={() => { if (!restoring) setConfirming(false); }}>
-      <p>将使用“{file?.name}”替换当前全部账户、渠道、模型、密钥、设置和历史记录。恢复前的原数据会自动保留。</p>
-      <p className="field-hint">恢复会等待正在进行的请求和后台任务完成，期间暂停处理新请求。恢复成功后需要重新登录。</p>
+      <p>将使用“{file?.name}”替换当前全部账户、渠道、模型、密钥、设置和用量统计，并清空内存中的近期请求。恢复前的原数据会自动保留。</p>
+      <p className="field-hint">恢复会等待正在进行的请求和后台任务完成，期间暂停处理新请求。恢复成功后需要重新登录。旧版备份中的请求明细会先归档，再转换为用量统计。</p>
       <div className="form-footer"><button className="secondary" type="button" disabled={restoring} onClick={() => setConfirming(false)}>取消</button><button className="destructive" type="button" disabled={restoring} onClick={() => void restore()}>{restoring ? "正在校验并恢复…" : "确认替换并恢复"}</button></div>
     </Dialog>}
   </section>;

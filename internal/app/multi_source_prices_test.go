@@ -164,9 +164,7 @@ func TestNewAPIAccountPricesAndRatios(t *testing.T) {
 func TestOverviewReportsUnpricedRequests(t *testing.T) {
 	a := testApp(t)
 	rows := []RequestLog{{RequestID: "estimated", Status: 200, CostStatus: "estimated", CostMicros: 2220, CreatedAt: time.Now()}, {RequestID: "pending", Status: 200, CostStatus: "unknown", CreatedAt: time.Now()}}
-	if err := a.DB.Create(&rows).Error; err != nil {
-		t.Fatal(err)
-	}
+	requestUsageForTest(t, a, rows)
 	h := a.Router()
 	response := call(h, "GET", "/api/overview", "", loginForTest(t, h))
 	var summary struct {

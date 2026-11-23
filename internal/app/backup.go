@@ -1,9 +1,12 @@
 package app
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"ledgergate/internal/backup"
@@ -34,13 +37,13 @@ func (a *App) createBackup(c *gin.Context) {
 	defer os.RemoveAll(dir)
 	database := filepath.Join(dir, "ledgergate.db")
 	if err := a.DB.WithContext(c.Request.Context()).Exec("VACUUM INTO ?", database).Error; err != nil {
-		fail(c, 500, "创建一致性数据库快照失败")
+		fail(c, 500, fmt.Sprintf("创建数据库快照失败，请检查剩余空间：%v", err))
 		return
 	}
-	files := map[string][]byte{}
+	files := map[string]io.Reader{}
 	for _, name := range []string{"ledgergate.db", "master.key", "admin-password"} {
 		if name == "admin-password" && a.adminPassword != "" {
-			files[name] = []byte(a.adminPassword + "\n")
+			files[name] = strings.NewReader(a.adminPassword + "\n")
 			continue
 		}
 		file := filepath.Join(a.dataDir, name)
@@ -48,22 +51,38 @@ func (a *App) createBackup(c *gin.Context) {
 			file = database
 		}
 		info, statErr := os.Stat(file)
-		if statErr != nil || info.Size() > backup.Limit {
-			fail(c, 500, "备份文件缺失或超过 256 MiB")
+		if statErr != nil {
+			fail(c, 500, fmt.Sprintf("无法访问备份文件 %s：%v", name, statErr))
 			return
 		}
-		data, readErr := os.ReadFile(file)
+		if !info.Mode().IsRegular() {
+			fail(c, 500, fmt.Sprintf("备份文件 %s 不是普通文件", name))
+			return
+		}
+		if info.Size() > backup.Limit {
+			fail(c, 500, fmt.Sprintf("备份文件 %s 当前 %.2f MiB，超过 4 GiB 上限", name, float64(info.Size())/(1<<20)))
+			return
+		}
+		data, readErr := os.Open(file)
 		if readErr != nil {
-			fail(c, 500, "读取备份文件失败")
+			fail(c, 500, fmt.Sprintf("读取备份文件 %s 失败：%v", name, readErr))
 			return
 		}
+		defer data.Close()
 		files[name] = data
 	}
-	raw, err := backup.Encrypt(files, input.Password)
+	archive := filepath.Join(dir, "backup.lgb")
+	output, err := os.OpenFile(archive, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
-		fail(c, 500, "加密备份失败")
+		fail(c, 500, "创建加密备份文件失败，请检查数据目录权限和剩余空间")
 		return
 	}
-	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"ledgergate-%s.lgb\"", time.Now().UTC().Format("20060102-150405")))
-	c.Data(200, "application/octet-stream", raw)
+	err = backup.EncryptTo(output, files, input.Password)
+	closeErr := output.Close()
+	if err != nil || closeErr != nil {
+		fail(c, 500, fmt.Sprintf("生成加密备份失败：%v", errors.Join(err, closeErr)))
+		return
+	}
+	c.Header("Content-Type", "application/octet-stream")
+	c.FileAttachment(archive, fmt.Sprintf("ledgergate-%s.lgb", time.Now().UTC().Format("20060102-150405")))
 }

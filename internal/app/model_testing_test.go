@@ -124,9 +124,12 @@ func TestModelTestingProtocolsAndKeys(t *testing.T) {
 	if key != "private-upstream-key" || !saved.Enabled || len(a.health) != 0 || calls.Load() != 8 {
 		t.Fatal("testing mutated the channel or used a fallback")
 	}
-	var logs int64
-	a.DB.Model(&RequestLog{}).Count(&logs)
-	if logs != 0 {
+	logs, _ := a.requestSummaries()
+	var requests int64
+	if err := a.DB.Model(&RequestHour{}).Select("COALESCE(SUM(requests),0)").Scan(&requests).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 0 || requests != 0 {
 		t.Fatal("tests polluted gateway request records")
 	}
 }

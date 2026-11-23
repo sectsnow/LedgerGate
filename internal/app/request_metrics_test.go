@@ -115,11 +115,17 @@ func TestRequestMetricsCostSnapshotAndMultiplier(t *testing.T) {
 		t.Fatal("invalid usage presented as a known charge")
 	}
 	a.recordRequestCost(&log, result, group, Route{}, channel, rate)
-	if log.CostDetail != nil || log.CostSource != "" { t.Fatal("fallback to unpriced route kept previous attempt's price snapshot") }
+	if log.CostDetail != nil || log.CostSource != "" {
+		t.Fatal("fallback to unpriced route kept previous attempt's price snapshot")
+	}
 	zero := 0.0
-	if cost,status,_ := pricedCost(completion{Input:1,UsageSeen:true},tiny,&zero); cost != 0 || status != "estimated" { t.Fatal("explicit zero multiplier not treated as a known free price") }
+	if cost, status, _ := pricedCost(completion{Input: 1, UsageSeen: true}, tiny, &zero); cost != 0 || status != "estimated" {
+		t.Fatal("explicit zero multiplier not treated as a known free price")
+	}
 	huge := 1e30
-	if cost,_,warning := pricedCost(completion{Input:1,UsageSeen:true},tiny,&huge); cost <= 0 || warning == "" { t.Fatal("overflow fee did not preserve its warning") }
+	if cost, _, warning := pricedCost(completion{Input: 1, UsageSeen: true}, tiny, &huge); cost <= 0 || warning == "" {
+		t.Fatal("overflow fee did not preserve its warning")
+	}
 }
 
 func TestRequestMetricsGatewayTimingsAndSnapshots(t *testing.T) {
@@ -201,10 +207,7 @@ func TestRequestMetricsGatewayTimingsAndSnapshots(t *testing.T) {
 			if response.Code != 200 {
 				t.Fatal(response.Code, response.Body.String())
 			}
-			var log RequestLog
-			if err := a.DB.Last(&log).Error; err != nil {
-				t.Fatal(err)
-			}
+			log := latestRequestForTest(t, a)
 			if log.MetricsVersion != 1 || log.KeyName != "Ubuntu" || log.ChannelName != channel.Name || log.Model != group.Name || log.UpstreamModel != "actual-upstream-model" || log.Protocol != to || log.UpstreamProtocol != from || !log.UsageRecorded || log.StartedAt == nil || log.FinishedAt == nil {
 				t.Fatalf("missing request snapshot: %+v", log)
 			}
@@ -221,8 +224,8 @@ func TestRequestMetricsGatewayTimingsAndSnapshots(t *testing.T) {
 			if err := a.DB.Model(&channel).Update("name", "renamed channel").Error; err != nil {
 				t.Fatal(err)
 			}
-			var saved RequestLog
-			if err := a.DB.First(&saved, log.ID).Error; err != nil || saved.ChannelName != "original channel" || saved.KeyName != "Ubuntu" || saved.CostDetail == nil {
+			saved, _, found := a.cachedRequestDetail(log.ID)
+			if !found || saved.ChannelName != "original channel" || saved.KeyName != "Ubuntu" || saved.CostDetail == nil {
 				t.Fatal("history depends on current channel or missing price snapshot")
 			}
 		})

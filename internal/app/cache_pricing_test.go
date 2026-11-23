@@ -144,10 +144,7 @@ func TestGatewayPersistsCacheCostAcrossProtocolConversion(t *testing.T) {
 	if output.Input != 1000 || output.CacheRead != 600 || output.CacheWrite1h != 100 {
 		t.Fatal("client cache usage lost")
 	}
-	var record RequestLog
-	if err := a.DB.Last(&record).Error; err != nil {
-		t.Fatal(err)
-	}
+	record := latestRequestForTest(t, a)
 	if record.CostMicros != 2220 || record.CacheReadTokens != 600 || record.CacheWriteTokens != 300 || record.CacheWrite1hTokens != 100 || record.CostStatus != "estimated" {
 		t.Fatalf("request cache accounting wrong: %+v", record)
 	}

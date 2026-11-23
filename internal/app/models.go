@@ -65,6 +65,7 @@ type Channel struct {
 	APIKey             string     `json:"-"`
 	Models             string     `json:"models"`
 	DiscoveredModels   string     `json:"discovered_models" gorm:"not null;default:''"`
+	ModelsBaseline     string     `json:"models_baseline" gorm:"not null;default:''"`
 	ModelsCheckedAt    *time.Time `json:"models_checked_at"`
 	ModelsSyncError    string     `json:"models_sync_error" gorm:"not null;default:''"`
 	TimeoutSeconds     int        `json:"timeout_seconds"`
@@ -184,6 +185,25 @@ type RequestDay struct {
 	CostUnknownRequests int64  `json:"cost_unknown_requests"`
 }
 
+type RequestHour struct {
+	Hour                int64  `gorm:"primaryKey;autoIncrement:false"`
+	ChannelID           uint   `gorm:"primaryKey;autoIncrement:false"`
+	Model               string `gorm:"primaryKey"`
+	ChannelName         string
+	Requests            int64
+	Errors              int64
+	Successes           int64
+	InputTokens         int64
+	OutputTokens        int64
+	CostMicros          int64
+	CostUnknownRequests int64
+	DurationMS          int64
+	FirstTokenMS        int64
+	FirstTokenCount     int64
+	GenerationMS        int64
+	GenerationTokens    int64
+}
+
 type Alert struct {
 	ID            uint      `json:"id" gorm:"primaryKey"`
 	AccountID     uint      `json:"account_id"`
@@ -258,7 +278,6 @@ type Setting struct {
 	TelegramChatID              string `json:"telegram_chat_id" gorm:"not null;default:''"`
 	AlertCooldownMinutes        int    `json:"alert_cooldown_minutes"`
 	RetentionDays               int    `json:"retention_days"`
-	RequestBodyRetentionDays    int    `json:"request_body_retention_days" gorm:"not null;default:7"`
-	RequestRetentionDays        int    `json:"request_retention_days" gorm:"not null;default:90"`
 	RequestSummaryRetentionDays int    `json:"request_summary_retention_days" gorm:"not null;default:365"`
+	RequestHistoryMigrated      bool   `json:"-" gorm:"not null;default:false"`
 }

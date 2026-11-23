@@ -18,10 +18,9 @@ func TestDeleteGroupRoutePreservesChannelsAndModelSettings(t *testing.T) {
 			if err := a.DB.Create(&shared).Error; err != nil {
 				t.Fatal(err)
 			}
-			log := RequestLog{ChannelID: group.Routes[0].ChannelID, Model: group.Name, CostMicros: 123}
-			if err := a.DB.Create(&log).Error; err != nil {
-				t.Fatal(err)
-			}
+			log := RequestLog{ChannelID: group.Routes[0].ChannelID, Model: group.Name, Status: 200, CostMicros: 123}
+			trace := a.beginRequestTrace(&log)
+			a.finishRequestTrace(trace, &log)
 			expected := group
 			for _, route := range group.Routes {
 				a.weights[route.ID] = 7
@@ -48,10 +47,14 @@ func TestDeleteGroupRoutePreservesChannelsAndModelSettings(t *testing.T) {
 			if !reflect.DeepEqual(loadOrderedGroup(t, a, shared.ID), shared) {
 				t.Fatal("another model using the same channel was changed")
 			}
-			var channels, logs int64
+			var channels int64
 			a.DB.Model(&Channel{}).Count(&channels)
-			a.DB.Model(&RequestLog{}).Where("id = ? AND cost_micros = ?", log.ID, log.CostMicros).Count(&logs)
-			if channels != 3 || logs != 1 {
+			cached, _, found := a.cachedRequestDetail(log.ID)
+			var summary RequestDay
+			if err := a.DB.First(&summary).Error; err != nil {
+				t.Fatal(err)
+			}
+			if channels != 3 || !found || cached.CostMicros != 123 || summary.Requests != 1 || summary.CostMicros != 123 {
 				t.Fatal("route removal deleted an upstream channel or historical usage")
 			}
 		})

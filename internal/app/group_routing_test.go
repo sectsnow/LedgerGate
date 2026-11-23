@@ -172,10 +172,7 @@ func TestGroupRoutingRetriesBeforeSwitchAndKeepsAffinity(t *testing.T) {
 			group := routingGroupForTest(t, a, &GroupRelayConfig{3, 1, 60, 300})
 			request := `{"model":"my-model","messages":[{"role":"user","content":"hello"}]}`
 			response := call(h, "POST", "/v1/chat/completions", request, token)
-			var log RequestLog
-			if err := a.DB.Last(&log).Error; err != nil {
-				t.Fatal(err)
-			}
+			log := latestRequestForTest(t, a)
 			_, detail := historyDetailForTest(t, h, cookie, log.ID)
 			wantAttempts, wantBackup := 3, int32(0)
 			if mode == "exhausted" {
@@ -274,10 +271,7 @@ func TestGroupRoutingRetryStopsOnCancellationBudgetAndDisable(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("retry wait ignored cancellation or budget")
 			}
-			var log RequestLog
-			if err := a.DB.Last(&log).Error; err != nil {
-				t.Fatal(err)
-			}
+			log := latestRequestForTest(t, a)
 			wantStatus, wantBackup := 503, int32(0)
 			if mode == "cancel" {
 				wantStatus = 499
@@ -328,10 +322,7 @@ func TestGroupRoutingHTTPFailureScopeAndSkipPolicy(t *testing.T) {
 				t.Fatal(err)
 			}
 			response := call(h, "POST", "/v1/chat/completions", `{"model":"my-model","messages":[]}`, token)
-			var log RequestLog
-			if err := a.DB.Last(&log).Error; err != nil {
-				t.Fatal(err)
-			}
+			log := latestRequestForTest(t, a)
 			wantBad, wantGood, wantStatus := int32(1), int32(1), 200
 			if status == 503 {
 				wantBad = 2
@@ -467,10 +458,7 @@ func TestGroupRoutingStreamExtensionsCommitWithoutInventingFirstToken(t *testing
 				body["max_tokens"] = 100
 			}
 			response := call(h, "POST", requestPath(protocol), jsonString(body), token)
-			var log RequestLog
-			if err := a.DB.Last(&log).Error; err != nil {
-				t.Fatal(err)
-			}
+			log := latestRequestForTest(t, a)
 			if response.Code != 200 || log.Status != 502 || log.Attempts != 1 || log.FirstTokenMS != nil || primaryCalls.Load() != 1 || backupCalls.Load() != 0 || !strings.Contains(response.Body.String(), "extension-payload") {
 				t.Fatalf("extension dropped, timed as first token, or replayed: %+v body=%s", log, response.Body.String())
 			}
@@ -499,10 +487,7 @@ func TestGroupRoutingConnectionAndLocalErrorScope(t *testing.T) {
 			token := createGroup(t, h, cookie, []Channel{channel, createChannel(t, h, cookie, "backup", backupServer.URL, "openai")}, "priority")
 			group := routingGroupForTest(t, a, &GroupRelayConfig{2, 1, 60, 300})
 			response := call(h, "POST", "/v1/chat/completions", `{"model":"my-model","messages":[]}`, token)
-			var log RequestLog
-			if err := a.DB.Last(&log).Error; err != nil {
-				t.Fatal(err)
-			}
+			log := latestRequestForTest(t, a)
 			if mode == "connection" {
 				if response.Code != 200 || log.Attempts != 3 || backupCalls.Load() != 1 {
 					t.Fatalf("connection retries incorrect: %+v", log)
@@ -559,10 +544,7 @@ func TestGroupRoutingResponseConversionFailureKeepsChannel(t *testing.T) {
 	defer backupServer.Close()
 	token := createGroup(t, h, cookie, []Channel{createChannel(t, h, cookie, "primary", primary.URL, "anthropic"), createChannel(t, h, cookie, "backup", backupServer.URL, "anthropic")}, "priority")
 	response := call(h, "POST", "/v1/chat/completions", `{"model":"my-model","messages":[]}`, token)
-	var log RequestLog
-	if err := a.DB.Last(&log).Error; err != nil {
-		t.Fatal(err)
-	}
+	log := latestRequestForTest(t, a)
 	if response.Code != 500 || log.Status != 500 || log.Attempts != 1 || primaryCalls.Load() != 1 || backupCalls.Load() != 0 || len(a.health) != 0 || len(a.routeHealth) != 0 {
 		t.Fatalf("local response conversion triggered retries or cooldown: %+v body=%s", log, response.Body.String())
 	}

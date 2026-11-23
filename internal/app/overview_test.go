@@ -199,9 +199,7 @@ func TestRequestActivityCalendarAndTimezone(t *testing.T) {
 		{CreatedAt: now},
 		{CreatedAt: now.Add(time.Hour)},
 	}
-	if err := a.DB.Create(&logs).Error; err != nil {
-		t.Fatal(err)
-	}
+	requestUsageForTest(t, a, logs[:len(logs)-1])
 	days, err := a.requestActivity(now)
 	if err != nil || len(days) != 365 {
 		t.Fatal(err)

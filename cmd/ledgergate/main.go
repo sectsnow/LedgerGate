@@ -40,18 +40,19 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		if info.Size() > backup.Limit+48 {
-			return errors.New("备份文件超过大小限制")
+		if info.Size() > backup.FileLimit {
+			return errors.New("备份文件超过 4 GiB 大小限制")
 		}
-		raw, err := os.ReadFile(*file)
+		archive, err := os.Open(*file)
 		if err != nil {
 			return err
 		}
+		defer archive.Close()
 		password, err := os.ReadFile(*passwordFile)
 		if err != nil {
 			return err
 		}
-		if err := backup.Restore(raw, strings.TrimSpace(string(password)), *destination); err != nil {
+		if err := backup.RestoreReader(archive, strings.TrimSpace(string(password)), *destination); err != nil {
 			return err
 		}
 		fmt.Println("备份已校验并恢复到新目录：" + *destination)

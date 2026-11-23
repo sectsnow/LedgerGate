@@ -101,10 +101,7 @@ func TestGatewayStreamCompletionCancellation(t *testing.T) {
 						if (ctx.Err() == nil) != test.withoutCancel {
 							t.Fatal("client context cancellation did not match the scenario")
 						}
-						var log RequestLog
-						if err := a.DB.Last(&log).Error; err != nil {
-							t.Fatal(err)
-						}
+						log := latestRequestForTest(t, a)
 						log, detail := historyDetailForTest(t, h, cookie, log.ID)
 						status, state := 499, "cancelled"
 						if test.stage == "after_completion" {
@@ -157,10 +154,7 @@ func TestGatewayJSONCompletionCancellation(t *testing.T) {
 				if ctx.Err() == nil {
 					t.Fatal("client cancellation was not triggered")
 				}
-				var log RequestLog
-				if err := a.DB.Last(&log).Error; err != nil {
-					t.Fatal(err)
-				}
+				log := latestRequestForTest(t, a)
 				log, detail := historyDetailForTest(t, h, cookie, log.ID)
 				status, state := 499, "cancelled"
 				if stage == "after_json_completion" {

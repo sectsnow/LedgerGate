@@ -274,8 +274,8 @@ func TestPriceSyncFailuresAndAccounting(t *testing.T) {
 	if response.Code != 200 {
 		t.Fatal(response.Body.String())
 	}
-	var record RequestLog
-	if err := a.DB.Last(&record).Error; err != nil || record.CostMicros != 750 {
+	record := latestRequestForTest(t, a)
+	if record.CostMicros != 750 {
 		t.Fatalf("synchronized price not used for accounting %+v", record)
 	}
 	unavailable.Store(true)

@@ -32,6 +32,9 @@ func restoreArchiveForTest(t *testing.T) ([]byte, string) {
 	if err := source.DB.Create(&RequestDetail{RequestLogID: row.ID, Payload: source.seal(jsonString(requestPayload{Available: true, ResponseBody: "data: {\"type\":\"response.completed\"}\n\n"}))}).Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := source.DB.Model(&Setting{}).Where("id = 1").Update("request_history_migrated", false).Error; err != nil {
+		t.Fatal(err)
+	}
 	h := source.Router()
 	cookie := loginForTest(t, h)
 	w := call(h, "PUT", "/api/admin/password", `{"current_password":"test-password-12345","new_password":"restored-password-123","confirm_password":"restored-password-123"}`, cookie)
@@ -102,12 +105,17 @@ func TestWebBackupRestoreHistoryCredentialsAndSessions(t *testing.T) {
 			if value, err := a.unseal(account.Token); err != nil || value != "archived-token" {
 				t.Fatal("restored credential cannot be decrypted", err)
 			}
-			var detail RequestDetail
-			if err := a.DB.First(&detail).Error; err != nil {
-				t.Fatal("request detail missing", err)
+			var summary RequestDay
+			if err := a.DB.First(&summary).Error; err != nil || summary.Requests != 1 {
+				t.Fatal("legacy request statistics missing", err)
 			}
-			if value, err := a.unseal(detail.Payload); err != nil || !strings.Contains(value, "response.completed") {
-				t.Fatal("request contents cannot be decrypted", err)
+			var details int64
+			if err := a.DB.Model(&RequestDetail{}).Count(&details).Error; err != nil || details != 0 {
+				t.Fatal("legacy bodies kept in live DB", err)
+			}
+			archives, err := filepath.Glob(filepath.Join(a.dataDir, "backups", "restore-*", "request-history", "request-history-*", "ledgergate.db"))
+			if err != nil || len(archives) != 1 {
+				t.Fatal("legacy request archive lost during restore", archives, err)
 			}
 			if len(a.health) != 0 || len(a.loginAttempts) != 0 {
 				t.Fatal("old runtime state survived restore")

@@ -620,7 +620,9 @@ func (a *App) syncChannelModels(parent context.Context, channel Channel) ([]stri
 		if current.BaseURL != channel.BaseURL || current.APIKey != channel.APIKey || current.UseProxy != channel.UseProxy || (current.Models != channel.Models && current.Models != jsonString(models)) || !slices.Equal(current.supportedProtocols(), channel.supportedProtocols()) {
 			return errors.New("渠道配置或模型列表已更新，请重新同步")
 		}
-		if tx.Model(&current).Update("models", jsonString(models)).Error != nil {
+		updates := channelModelDiscoveryUpdates(current, models)
+		updates["models"], updates["models_baseline"] = jsonString(models), updates["discovered_models"]
+		if tx.Model(&current).Updates(updates).Error != nil {
 			return errors.New("保存模型列表失败")
 		}
 		return nil

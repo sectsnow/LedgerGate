@@ -28,49 +28,7 @@ func (a *App) restoreBackup(c *gin.Context) {
 	defer a.backupMu.Unlock()
 	upload, err := c.Request.MultipartReader()
 	if err != nil {
-		fail(c, 400, "读取备份失败，文件上限 256 MiB")
-		return
-	}
-	var raw []byte
-	fields := map[string]string{}
-	seen := map[string]bool{}
-	// 直接读取上传流，避免大备份占满容器中仅有 64 MiB 的临时目录。
-	for {
-		part, err := upload.NextPart()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			fail(c, 400, "读取备份失败或文件超过 256 MiB")
-			return
-		}
-		name := part.FormName()
-		if seen[name] || name != "file" && name != "password" && name != "confirm" {
-			fail(c, 400, "备份上传参数无效")
-			return
-		}
-		seen[name] = true
-		limit := int64(256)
-		if name == "file" {
-			if !strings.EqualFold(filepath.Ext(part.FileName()), ".lgb") {
-				fail(c, 400, "请选择 .lgb 备份文件")
-				return
-			}
-			limit = backup.Limit + 48
-		}
-		data, err := io.ReadAll(io.LimitReader(part, limit+1))
-		if err != nil || int64(len(data)) > limit {
-			fail(c, 400, "备份文件超过 256 MiB 或密码超过 256 字节")
-			return
-		}
-		if name == "file" {
-			raw = data
-		} else {
-			fields[name] = string(data)
-		}
-	}
-	if fields["confirm"] != "恢复" || !seen["file"] {
-		fail(c, 400, "请选择 .lgb 文件并确认用备份替换当前数据")
+		fail(c, 400, "读取备份失败，请选择不超过 4 GiB 的 .lgb 文件")
 		return
 	}
 	backupDir := filepath.Join(a.dataDir, "backups")
@@ -89,11 +47,70 @@ func (a *App) restoreBackup(c *gin.Context) {
 			os.RemoveAll(workspace)
 		}
 	}()
+	archive, err := os.OpenFile(filepath.Join(workspace, "uploaded.lgb"), os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		fail(c, 500, "创建上传临时文件失败，请检查剩余空间")
+		return
+	}
+	defer archive.Close()
+	fields := map[string]string{}
+	seen := map[string]bool{}
+	// 上传文件写入数据卷，避免占满内存和容器中仅有 64 MiB 的临时目录。
+	for {
+		part, err := upload.NextPart()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			fail(c, 400, "读取备份失败或文件超过 4 GiB")
+			return
+		}
+		name := part.FormName()
+		if seen[name] || name != "file" && name != "password" && name != "confirm" {
+			fail(c, 400, "备份上传参数无效")
+			return
+		}
+		seen[name] = true
+		limit := int64(256)
+		if name == "file" {
+			if !strings.EqualFold(filepath.Ext(part.FileName()), ".lgb") {
+				fail(c, 400, "请选择 .lgb 备份文件")
+				return
+			}
+			limit = backup.FileLimit
+			count, err := io.Copy(archive, io.LimitReader(part, limit+1))
+			if err != nil {
+				fail(c, 500, "保存上传备份失败，请检查数据卷剩余空间")
+				return
+			}
+			if count > limit {
+				fail(c, 400, "备份文件超过 4 GiB")
+				return
+			}
+			continue
+		}
+		data, err := io.ReadAll(io.LimitReader(part, limit+1))
+		if err != nil || int64(len(data)) > limit {
+			fail(c, 400, "备份密码或确认参数超过 256 字节")
+			return
+		}
+		fields[name] = string(data)
+	}
+	if fields["confirm"] != "恢复" || !seen["file"] {
+		fail(c, 400, "请选择 .lgb 文件并确认用备份替换当前数据")
+		return
+	}
 	incoming := filepath.Join(workspace, "incoming")
-	if err := backup.Restore(raw, fields["password"], incoming); err != nil {
+	if _, err := archive.Seek(0, io.SeekStart); err != nil {
+		fail(c, 500, "读取上传备份失败")
+		return
+	}
+	if err := backup.RestoreReader(archive, fields["password"], incoming); err != nil {
 		fail(c, 400, err.Error())
 		return
 	}
+	archive.Close()
+	os.Remove(archive.Name())
 	config := Config{DataDir: incoming}
 	if a.envPassword {
 		config.AdminPassword = a.adminPassword
@@ -108,6 +125,13 @@ func (a *App) restoreBackup(c *gin.Context) {
 	if err != nil || closeErr != nil {
 		fail(c, 500, "准备恢复数据失败，当前数据未修改")
 		return
+	}
+	// 旧备份升级产生的原始详情归档随恢复工作区保留，不能随 incoming 一起清理。
+	if _, err := os.Stat(filepath.Join(incoming, "backups")); err == nil {
+		if err := os.Rename(filepath.Join(incoming, "backups"), filepath.Join(workspace, "request-history")); err != nil {
+			fail(c, 500, "保留旧请求归档失败，当前数据未修改")
+			return
+		}
 	}
 	if c.Request.Context().Err() != nil {
 		return
@@ -197,6 +221,8 @@ func (a *App) useRestoredData(restored *App) {
 	a.groupRouting = nil
 	a.monitoring, a.loginAttempts = restored.monitoring, restored.loginAttempts
 	a.activeRequests, a.accountIcons = nil, nil
+	a.finishedRequests, a.finishedRequestBytes = nil, 0
+	a.nextRequestID = restored.nextRequestID
 }
 
 func recoverPendingRestore(dataDir string) error {

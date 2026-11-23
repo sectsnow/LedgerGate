@@ -183,7 +183,7 @@ func (a *App) mergeTransfer(tx *gorm.DB, doc transferDocument, selected []string
 		for _, source := range doc.Channels {
 			value := source.Channel
 			value.Account, value.ID, value.Enabled, value.APIKey = nil, 0, false, a.seal(source.Key)
-			value.AutoDisabledReason, value.DiscoveredModels, value.ModelsSyncError, value.ModelsCheckedAt = "", "", "", nil
+			value.AutoDisabledReason, value.DiscoveredModels, value.ModelsBaseline, value.ModelsSyncError, value.ModelsCheckedAt = "", "", "", "", nil
 			query := tx
 			if source.AccountID != nil {
 				id := accountIDs[*source.AccountID]
@@ -288,6 +288,7 @@ func (a *App) mergeTransfer(tx *gorm.DB, doc transferDocument, selected []string
 		}
 		value := doc.Settings.Setting
 		value.ID, value.NotificationsMigrated = 1, true
+		value.RequestHistoryMigrated = current.RequestHistoryMigrated
 		value.WebhookURL, value.WebhookSecret, value.TelegramToken, value.TelegramChatID = "", "", "", ""
 		value.ProxyEnabled, value.ProxyURL = doc.Settings.ProxyOn, seal(current.ProxyURL, doc.Settings.ProxyAddress)
 		value.NotificationAccounts = []uint{}

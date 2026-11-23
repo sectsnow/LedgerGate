@@ -123,10 +123,18 @@ func (a *App) releaseGroupProbe(group Group, item candidate) {
 	}
 }
 
-func (a *App) memberRetryAvailable(item candidate) bool {
+func (a *App) memberRetryAvailable(group Group, item candidate, probe bool) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	health, routeHealth := a.health[item.Channel.ID], a.routeHealth[item.Route.ID]
+	if probe {
+		// 同一请求重试时保留探测占用，其他请求继续使用备用成员。
+		state := a.groupRouting[group.ID]
+		now := time.Now()
+		return state != nil && state.Revision == groupRoutingRevision(group) && state.Probe == item.Route.ID &&
+			!now.Before(health.Until) && !now.Before(routeHealth.Until) &&
+			(health.Until.IsZero() || health.Probing) && (routeHealth.Until.IsZero() || routeHealth.Probing)
+	}
 	return health.Until.IsZero() && routeHealth.Until.IsZero() && !health.Probing && !routeHealth.Probing
 }
 

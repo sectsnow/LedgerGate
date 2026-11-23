@@ -2,11 +2,13 @@ import { useEffect, useState } from "react";
 import { LoaderCircle, RefreshCw, Search } from "lucide-react";
 import { api, type Channel } from "./api";
 import { ChannelSelection } from "./ChannelBatch";
+import { channelModelSyncSelection } from "./channelModels";
 
 type Preview = { models: string[]; saved_models: string[]; revision: string };
 type Row = {
   channel: Channel;
   models: string[];
+  available: string[];
   saved: string[];
   selected: Set<string>;
   revision: string;
@@ -29,16 +31,15 @@ export default function ChannelModelSync({ channels, busy, setBusy, close, saved
     let cancelled = false;
     let next = 0;
     setMessage("");
-    setRows(channels.map(channel => ({ channel, models: [], saved: [], selected: new Set(), revision: "", status: "loading", error: "" })));
+    setRows(channels.map(channel => ({ channel, models: [], available: [], saved: [], selected: new Set(), revision: "", status: "loading", error: "" })));
     async function load() {
       while (!cancelled && next < channels.length) {
         const channel = channels[next++];
         try {
           const preview = await api<Preview>(`/channels/${channel.id}/models/available`);
-          const previous = new Set(preview.saved_models);
           if (!cancelled) setRows(current => current.map(row => row.channel.id === channel.id ? {
-            ...row, models: preview.models, saved: preview.saved_models, revision: preview.revision, status: "ready",
-            selected: new Set(previous.size ? preview.models.filter(model => previous.has(model)) : preview.models),
+            ...row, ...channelModelSyncSelection(preview.models, preview.saved_models), available: preview.models,
+            saved: preview.saved_models, revision: preview.revision, status: "ready",
           } : row));
         } catch (error) {
           if (!cancelled) setRows(current => current.map(row => row.channel.id === channel.id ? { ...row, status: "error", error: (error as Error).message } : row));
@@ -97,7 +98,7 @@ export default function ChannelModelSync({ channels, busy, setBusy, close, saved
       }
     }}>
       <p className="field-hint">
-        勾选要同步的模型，确认后替换该渠道已保存的模型列表，已有模型路由保留。已有模型默认勾选，首次同步默认全选；未勾选任何模型的渠道会跳过。
+        已有模型默认保留，新增模型请按需勾选；上游未返回的已有模型仍保留，可取消勾选后移除。确认后保存所选模型及本次检查结果，已有路由保留。未选择模型的渠道会跳过。
       </p>
       <div className="list-toolbar model-sync-toolbar">
         <div className="search"><Search size={16} /><input aria-label="搜索可同步模型" placeholder="搜索模型名称" value={search} disabled={busy} onChange={event => setSearch(event.target.value)} /></div>
@@ -108,7 +109,7 @@ export default function ChannelModelSync({ channels, busy, setBusy, close, saved
         {rows.map(row => {
           const visible = row.models.filter(model => model.toLowerCase().includes(query));
           const selectedCount = visible.filter(model => row.selected.has(model)).length;
-          const available = new Set(row.models);
+          const available = new Set(row.available);
           const unavailable = row.saved.filter(model => !available.has(model)).length;
           return <section className="model-sync-channel" key={row.channel.id} aria-label={`${row.channel.name}可同步模型`}>
             <div className="model-sync-heading"><strong>{row.channel.name}</strong><span>{row.status === "saved" ? "已同步" : `${row.selected.size} / ${row.models.length} 个模型`}</span></div>
@@ -118,10 +119,10 @@ export default function ChannelModelSync({ channels, busy, setBusy, close, saved
                 {query ? "全选筛选结果" : "全选模型"}<span>{visible.length} 个</span>
               </label>
               <div className="model-sync-list">
-                {visible.map(model => <label className="checkbox" key={model}><input type="checkbox" aria-label={`${row.channel.name} / ${model}`} disabled={busy || row.status === "saved"} checked={row.selected.has(model)} onChange={event => toggle(row.channel.id, [model], event.target.checked)} /><code>{model}</code></label>)}
+                {visible.map(model => <label className="checkbox" key={model}><input type="checkbox" aria-label={`${row.channel.name} / ${model}`} disabled={busy || row.status === "saved"} checked={row.selected.has(model)} onChange={event => toggle(row.channel.id, [model], event.target.checked)} /><code>{model}{!available.has(model) && <small className="table-sub">上游未返回，默认保留</small>}</code></label>)}
                 {visible.length === 0 && <p className="field-hint">{row.models.length ? "没有匹配的模型" : "上游未返回可同步模型，原列表保留。"}</p>}
               </div>
-              {unavailable > 0 && <p className="field-hint">原列表中有 {unavailable} 个模型未被上游返回，同步此渠道后将从列表移除。</p>}
+              {unavailable > 0 && <p className="field-hint">有 {unavailable} 个已有模型未被上游返回，仍按原选择保留；取消勾选才会移除，不代表实际调用一定失败。</p>}
             </>}
             {row.error && <p className="form-error" role="alert">{row.error}</p>}
           </section>;

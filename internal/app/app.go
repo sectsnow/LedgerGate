@@ -55,15 +55,18 @@ type App struct {
 	notificationMu sync.Mutex
 	mu             sync.Mutex
 	// shortcut: 轮询和冷却状态保存在当前进程，部署多实例时改用共享状态。
-	weights        map[uint]int
-	health         map[uint]channelState
-	routeHealth    map[uint]channelState
-	groupRouting   map[uint]*groupRouteState
-	monitoring     map[uint]bool
-	loginAttempts  map[string][]time.Time
-	activeRequests map[uint]*requestTrace
-	modelTests     int
-	accountIcons   map[uint]*accountIconCache
+	weights              map[uint]int
+	health               map[uint]channelState
+	routeHealth          map[uint]channelState
+	groupRouting         map[uint]*groupRouteState
+	monitoring           map[uint]bool
+	loginAttempts        map[string][]time.Time
+	activeRequests       map[uint]*requestTrace
+	finishedRequests     []cachedRequest
+	finishedRequestBytes int
+	nextRequestID        uint
+	modelTests           int
+	accountIcons         map[uint]*accountIconCache
 }
 
 func Open(config Config) (*App, error) {
@@ -120,6 +123,11 @@ func open(config Config) (*App, error) {
 	if err = db.Exec("PRAGMA foreign_keys=ON").Error; err != nil {
 		return nil, err
 	}
+	if errors.Is(databaseErr, os.ErrNotExist) {
+		if err = db.Exec("PRAGMA auto_vacuum=INCREMENTAL").Error; err != nil {
+			return nil, err
+		}
+	}
 	if err = db.Exec("PRAGMA journal_mode=WAL").Error; err != nil {
 		return nil, err
 	}
@@ -130,7 +138,7 @@ func open(config Config) (*App, error) {
 		return nil, err
 	}
 	keyUsageExisted := db.Migrator().HasColumn(&APIKey{}, "used_micros")
-	if err = db.AutoMigrate(&Account{}, &Channel{}, &Group{}, &Route{}, &APIKey{}, &Snapshot{}, &RequestLog{}, &RequestDetail{}, &RequestDay{}, &Alert{}, &AlertState{}, &Session{}, &Setting{}, &channelCreation{}, &SyncTask{}, &NotificationChannel{}, &NotificationDelivery{}); err != nil {
+	if err = db.AutoMigrate(&Account{}, &Channel{}, &Group{}, &Route{}, &APIKey{}, &Snapshot{}, &RequestLog{}, &RequestDetail{}, &RequestDay{}, &RequestHour{}, &Alert{}, &AlertState{}, &Session{}, &Setting{}, &channelCreation{}, &SyncTask{}, &NotificationChannel{}, &NotificationDelivery{}); err != nil {
 		return nil, err
 	}
 	if !keyUsageExisted {
@@ -144,16 +152,20 @@ func open(config Config) (*App, error) {
 	}).Error; err != nil {
 		return nil, err
 	}
-	if err = db.FirstOrCreate(&Setting{ID: 1, AlertCooldownMinutes: 60, RetentionDays: 30, RequestBodyRetentionDays: 7, RequestRetentionDays: 90, RequestSummaryRetentionDays: 365}).Error; err != nil {
+	if err = db.FirstOrCreate(&Setting{ID: 1, AlertCooldownMinutes: 60, RetentionDays: 30, RequestSummaryRetentionDays: 365}).Error; err != nil {
 		return nil, err
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
 	transport.MaxIdleConnsPerHost = 20
 	app := &App{DB: db, aead: aead, passwordHash: hash, dataDir: config.DataDir, adminPassword: password, envPassword: config.AdminPassword != "",
-		client:  &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
-		weights: map[uint]int{}, health: map[uint]channelState{}, monitoring: map[uint]bool{}, loginAttempts: map[string][]time.Time{}}
+		nextRequestID: uint(time.Now().UnixMicro()),
+		client:        &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		weights:       map[uint]int{}, health: map[uint]channelState{}, monitoring: map[uint]bool{}, loginAttempts: map[string][]time.Time{}}
 	if err := app.migrateNotifications(); err != nil {
+		return nil, err
+	}
+	if err := app.migrateRequestHistory(); err != nil {
 		return nil, err
 	}
 	opened = true

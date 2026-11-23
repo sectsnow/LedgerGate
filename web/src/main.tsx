@@ -69,6 +69,7 @@ import RequestHistory, { RequestList } from "./RequestHistory";
 import ChannelBatch, { ChannelSelection } from "./ChannelBatch";
 import ChannelModelSync from "./ChannelModelSync";
 import ChannelModelEditor, { channelModelNames } from "./ChannelModelEditor";
+import { channelModelChanges } from "./channelModels";
 import useRouteOrder from "./useRouteOrder";
 import { AnnouncementList, MonitorHistory, MonitoringPanels } from "./MonitorActivity";
 import ThemePicker from "./ThemePicker";
@@ -868,7 +869,7 @@ function App() {
               )}
               {current.id === "keys" && <Keys data={data} run={run} />}
               {current.id === "requests" && (
-                <RequestHistory channels={data.channels} dialog={Dialog} changed={refresh} />
+                <RequestHistory channels={data.channels} dialog={Dialog} />
               )}
               {["alerts", "rate-changes", "announcements"].includes(current.id) && (
                 <MonitorHistory key={current.id} mode={current.id as "alerts" | "rate-changes" | "announcements"} accounts={data.accounts} revision={data} dialog={Dialog} />
@@ -1514,10 +1515,10 @@ function Overview({
   const periodLabel = typeof period === "object" ? "所选时段" : period === "today" ? "今日" : period === 1 ? "24 小时" : `${period} 天`;
   const retentionStart = activity.at(-data.settings.request_summary_retention_days)?.date || firstDate;
   const selectedStart = typeof period === "object" ? period.start : days[0]?.date;
-  // 滚动 24 小时可能跨越 25 个小时桶，首尾包含不足一小时的数据。
+  // 与后端相同，使用当前小时及之前 23 个小时的汇总。
   const hours = Array.from(
-    { length: 25 },
-    (_, i) => Math.floor(Date.now() / 3600000) * 3600 - (24 - i) * 3600,
+    { length: 24 },
+    (_, i) => Math.floor(Date.now() / 3600000) * 3600 - (23 - i) * 3600,
   ).filter(hour => period !== "today" || hour >= Date.parse(`${lastDate}T00:00:00+08:00`) / 1000);
   const points = period === 1 || period === "today" ? hours.map((hour) => ({
     label: new Date(hour * 1000).toLocaleTimeString("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false }),
@@ -1538,7 +1539,7 @@ function Overview({
         <div className="balance-period" role="group" aria-label="网关用量统计时段">
           {(["today", 1, 7, 14, 30] as const).map((value) => (
             <button key={value} aria-pressed={period === value} onClick={() => { setPeriod(value); setCustomOpen(false); setRangeError(""); }}>
-              {value === "today" ? "今天" : value === 1 ? "24小时" : `${value}天`}
+              {value === "today" ? "今天" : value === 1 ? "近24个小时" : `${value}天`}
             </button>
           ))}
           <button aria-pressed={typeof period === "object"} aria-expanded={customOpen} onClick={() => setCustomOpen(!customOpen)}>自定义</button>
@@ -1620,7 +1621,7 @@ function Overview({
               <p>{typeof period === "object"
                 ? `${period.start} 至 ${period.end} · 按北京时间自然日（含首尾日期）`
                 : period === "today" ? "今天 · 北京时间零点至当前 · 按小时汇总"
-                  : period === 1 ? "过去 24 小时 · 按小时汇总" : `近 ${period} 天 · 按北京时间自然日（含今天）`}</p>
+                  : period === 1 ? "近 24 个小时 · 包含当前小时" : `近 ${period} 天 · 按北京时间自然日（含今天）`}</p>
               {period !== 1 && selectedStart && selectedStart < retentionStart && (
                 <p>每日汇总保留 {data.settings.request_summary_retention_days} 天，已清理的历史不计入统计。</p>
               )}
@@ -2554,6 +2555,18 @@ function Channels({
       setBatchBusy(false);
     }
   }
+  async function acknowledgeModels(row: ChannelRow) {
+    setBatchBusy(true);
+    setToggleError("");
+    try {
+      await api(`/channels/${row.channel.id}/models/acknowledge`, "POST", { revision: row.models_revision });
+      await run(() => Promise.resolve(), "已确认模型变化，当前选择保持不变");
+    } catch (error) {
+      setToggleError(`渠道“${row.channel.name}”：${(error as Error).message}`);
+    } finally {
+      setBatchBusy(false);
+    }
+  }
   const affectedGroups = deleting
     ? data.groups
         .filter((group) =>
@@ -2765,6 +2778,7 @@ function Channels({
                   edit={edit}
                   sync={(channel) => setSyncing([channel])}
                   toggle={toggleChannel}
+                  acknowledge={acknowledgeModels}
                   selected={selected}
                   busy={batchBusy}
                   selectionLabel={`选择${group.account?.name || "直连供应商"}的全部渠道`}
@@ -2890,6 +2904,7 @@ function ChannelTable({
   edit,
   sync,
   toggle,
+  acknowledge,
   remove,
   selected,
   busy,
@@ -2900,6 +2915,7 @@ function ChannelTable({
   edit: (row: ChannelRow, showModels?: boolean) => void;
   sync: (channel: Channel) => void;
   toggle: (channel: Channel) => Promise<void>;
+  acknowledge: (row: ChannelRow) => Promise<void>;
   remove: (channel: Channel) => void;
   selected: number[];
   busy: boolean;
@@ -2940,6 +2956,8 @@ function ChannelTable({
             const channel = row.channel;
             const cooling = new Date(row.cooldown_until).getTime() > Date.now();
             const models = channelModelNames(channel.models);
+            const changes = channelModelChanges(channel);
+            const changed = changes.added.length > 0 || changes.removed.length > 0;
             return (
               <tr key={channel.id}>
                 <td className="channel-selection-cell">
@@ -2986,12 +3004,17 @@ function ChannelTable({
                   >
                     <RefreshCw size={14} />
                   </button>
-                  {channel.models_checked_at && <small className="table-sub" title={date(channel.models_checked_at)}>模型发现 {relativeTime(channel.models_checked_at)}</small>}
-                  {channel.discovered_models && <details className="discovered-models"><summary>上游模型变化 · 待确认</summary>
-                    <p>新增：{channelModelNames(channel.discovered_models).filter(name => !models.includes(name)).join("、") || "无"}</p>
-                    <p>上游未返回：{models.filter(name => !channelModelNames(channel.discovered_models).includes(name)).join("、") || "无"}</p>
-                    <small>已选模型保持原样。点击同步预览并确认需要的模型。</small>
+                  {channel.models_checked_at && <small className="table-sub" title={`上次成功检查：${date(channel.models_checked_at)}`}>已检查 · {relativeTime(channel.models_checked_at)}</small>}
+                  {changed && <details className="discovered-models"><summary>{[changes.added.length ? `新增 ${changes.added.length} 个` : "", changes.removed.length ? `未返回 ${changes.removed.length} 个` : ""].filter(Boolean).join(" · ")}</summary>
+                    {changes.added.length > 0 && <p>上游新增：{changes.added.join("、")}</p>}
+                    {changes.removed.length > 0 && <p>上游未返回：{changes.removed.map(model => models.includes(model) ? `${model}（已选）` : model).join("、")}</p>}
+                    <small>相对上次确认结果的变化，当前选择保持不变。</small>
+                    <div className="discovered-model-actions">
+                      <button className="text-button" type="button" disabled={busy} onClick={() => sync(channel)}>查看并同步</button>
+                      <button className="text-button" type="button" disabled={busy} onClick={() => void acknowledge(row)}>保持当前选择</button>
+                    </div>
                   </details>}
+                  {!changed && changes.missing.length > 0 && <small className="table-sub" title={changes.missing.join("、")}>已保留 {changes.missing.length} 个上游未返回的模型</small>}
                   {channel.models_sync_error && <small className="table-sub price-match-error">发现失败：{channel.models_sync_error}</small>}
                 </td>
                 <td>
@@ -3328,7 +3351,7 @@ function ChannelForm({
               </Field>
             </div>
           )}
-          <Field label="单次请求超时（秒）">
+          <Field label="单次请求超时（秒）" hint="非流式限制完整响应时间；流式限制首个有效输出，与系统首输出超时取较小值。">
             <input
               required
               type="number"
@@ -3716,7 +3739,7 @@ function Models({
         <p className="delete-description">确认删除以下 {deleting.groups.length} 个模型及其路由配置？删除后，这些模型将无法通过网关调用。</p>
         {deleting.all && <p className="form-error">清空范围包含全部模型，不受当前搜索或厂商筛选限制。</p>}
         <ul className="channel-batch-targets">{deleting.groups.map(group => <li key={group.id}>{group.name}</li>)}</ul>
-        <p className="field-hint">渠道配置、渠道保存的模型列表和历史请求记录会保留。</p>
+        <p className="field-hint">渠道配置、渠道保存的模型列表、近期请求及用量统计会保留。</p>
         <div className="form-footer">
           <button className="secondary" disabled={deleteBusy} onClick={() => setDeleting(null)}>取消</button>
           <Button className="destructive" busy={deleteBusy} onClick={() => void deleteModels()}>确认删除 {deleting.groups.length} 个模型</Button>
@@ -4248,7 +4271,7 @@ function SettingsForm({
         </details>
         <details className="runtime-options"><summary>转发超时与采集并发</summary><div className="form-grid">{([
           ["first_output_seconds", "等待首个有效输出（秒）", 1, 3600], ["stream_idle_seconds", "流无数据超时（秒）", 1, 3600], ["request_timeout_seconds", "整次请求总时间上限（秒）", 1, 10800], ["max_attempts", "整次请求最多尝试次数", 1, 32], ["monitor_concurrency", "账户采集并发数", 1, 8],
-        ] as const).map(([key, label, min, max]) => <Field label={label} key={key}><input required type="number" min={min} max={max} value={form.runtime[key]} onChange={event => setRuntime(key, Number(event.target.value))} /></Field>)}</div><p className="field-hint">各渠道已有的总超时继续生效。客户端取消请求后停止后续尝试。</p></details>
+        ] as const).map(([key, label, min, max]) => <Field label={label} key={key}><input required type="number" min={min} max={max} value={form.runtime[key]} onChange={event => setRuntime(key, Number(event.target.value))} /></Field>)}</div><p className="field-hint">流式开始输出后按无数据超时和整次请求总时间上限控制；客户端取消请求后停止后续尝试。</p></details>
         <details className="runtime-options"><summary>定时价格同步与模型发现</summary><div className="form-grid">
           <Field label="价格同步周期（小时）" hint="0 表示关闭，手动价格保持不变。"><input required type="number" min="0" max="720" value={form.runtime.price_sync_hours} onChange={event => setRuntime("price_sync_hours", Number(event.target.value))} /></Field>
           <Field label="模型发现周期（小时）" hint="0 表示关闭，发现结果在渠道中预览，确认同步后修改已选模型。"><input required type="number" min="0" max="720" value={form.runtime.model_sync_hours} onChange={event => setRuntime("model_sync_hours", Number(event.target.value))} /></Field>
@@ -4276,18 +4299,13 @@ function SettingsForm({
               onChange={(e) => set("retention_days", Number(e.target.value))}
             />
           </Field>
-          <Field label="请求正文保留天数" hint="请求与响应正文；到期后仍可查看请求统计。">
-            <input required type="number" min="1" max="365" value={form.request_body_retention_days} onChange={event => set("request_body_retention_days", Number(event.target.value))} />
-          </Field>
-          <Field label="请求统计保留天数" hint="逐条请求、Token、费用及计价明细；不能短于正文周期。">
-            <input required type="number" min="1" max="365" value={form.request_retention_days} onChange={event => set("request_retention_days", Number(event.target.value))} />
-          </Field>
-          <Field label="每日汇总保留天数" hint="按天汇总请求量、Token 和费用；不能短于请求统计周期。">
+          <Field label="用量统计保留天数" hint="按小时、日期及渠道/模型汇总请求量、Token、费用与性能，默认 365 天。">
             <input required type="number" min="1" max="365" value={form.request_summary_retention_days} onChange={event => set("request_summary_retention_days", Number(event.target.value))} />
           </Field>
         </div>
         <div className="settings-notes">
-          <p className="field-hint">请求数据按北京时间自然日保留，包含当天，每小时自动清理。缩短周期后，超期数据会自动删除。</p>
+          <p className="field-hint">用量统计按北京时间自然日保留，包含当天，每小时自动清理。缩短周期后，超期统计会自动删除。</p>
+          <p className="field-hint">近期请求和正文仅缓存在内存中，最多 50 条已结束请求、32 MiB，重启后清空；进行中请求另计。</p>
           <p className="field-hint">通知失败按各渠道设置独立重试；修改默认值仅影响新建渠道。</p>
         </div>
       </div>

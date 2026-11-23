@@ -70,6 +70,7 @@ export type Channel = {
   auto_disabled_reason: string;
   models: string;
   discovered_models: string;
+  models_baseline: string;
   models_checked_at: string | null;
   models_sync_error: string;
   timeout_seconds: number;
@@ -77,6 +78,7 @@ export type Channel = {
 };
 export type ChannelRow = {
   channel: Channel;
+  models_revision: string;
   monitoring_paused: boolean;
   cooldown_until: string;
   last_error: string;
@@ -335,8 +337,6 @@ export type Settings = {
   has_webhook_secret: boolean;
   alert_cooldown_minutes: number;
   retention_days: number;
-  request_body_retention_days: number;
-  request_retention_days: number;
   request_summary_retention_days: number;
 };
 export type NotificationChannel = {

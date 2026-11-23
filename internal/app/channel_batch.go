@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"sync"
 
 	"github.com/gin-gonic/gin"
@@ -108,6 +109,9 @@ func (a *App) applyChannelBatch(ctx context.Context, id uint, input channelBatch
 		updates := map[string]any{"enabled": input.Action == "enable", "auto_disabled_reason": ""}
 		if input.Action == "protocols" {
 			updates = map[string]any{"protocol": input.Protocols[0], "protocols": jsonString(input.Protocols)}
+			if !slices.Equal(channel.supportedProtocols(), input.Protocols) {
+				updates["discovered_models"], updates["models_baseline"], updates["models_sync_error"], updates["models_checked_at"] = "", "", "", nil
+			}
 		}
 		saved := a.DB.WithContext(ctx).Model(&Channel{}).Where("id = ?", id).Updates(updates)
 		if saved.Error != nil {

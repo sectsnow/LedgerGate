@@ -33,13 +33,6 @@ func (a *App) requestActivity(now time.Time) ([]RequestDay, error) {
 		for _, row := range archived {
 			counts[row.Date] = row
 		}
-		rows, err := requestDays(tx, start, now)
-		if err != nil {
-			return err
-		}
-		for _, row := range rows {
-			counts[row.Date] = row
-		}
 		return nil
 	})
 	if err != nil {

@@ -78,10 +78,7 @@ func TestGatewaySSEEventNames(t *testing.T) {
 					body["max_tokens"] = 100
 				}
 				response := call(h, "POST", requestPath(to), jsonString(body), token)
-				var log RequestLog
-				if err := a.DB.Last(&log).Error; err != nil {
-					t.Fatal(err)
-				}
+				log := latestRequestForTest(t, a)
 				if response.Code != 200 || log.Status != 200 || log.Attempts != 1 || log.FirstTokenMS == nil || log.InputTokens != 12 || log.OutputTokens != 7 || !strings.Contains(response.Body.String(), "你好") {
 					t.Fatalf("event-only type lost content, completion, timing or usage: status=%d log=%+v body=%s", response.Code, log, response.Body.String())
 				}
@@ -128,10 +125,7 @@ func TestGatewaySSEPrefaceKeepsChannel(t *testing.T) {
 				}
 				for request := range 2 {
 					response := call(h, "POST", requestPath(to), jsonString(body), token)
-					var log RequestLog
-					if err := a.DB.Last(&log).Error; err != nil {
-						t.Fatal(err)
-					}
+					log := latestRequestForTest(t, a)
 					if response.Code != 200 || log.Status != 200 || log.Attempts != 1 || log.ChannelID != channel.ID || log.FirstTokenMS == nil || log.InputTokens != 12 || log.OutputTokens != 7 || backupCalls.Load() != 0 {
 						t.Fatalf("preface caused failure or failover: request=%d status=%d log=%+v backup_calls=%d", request, response.Code, log, backupCalls.Load())
 					}
@@ -195,10 +189,7 @@ func TestGatewaySSELocalConversionFailureKeepsChannel(t *testing.T) {
 					body["input"] = "hello"
 				}
 				response := call(h, "POST", requestPath(to), jsonString(body), token)
-				var log RequestLog
-				if err := a.DB.Last(&log).Error; err != nil {
-					t.Fatal(err)
-				}
+				log := latestRequestForTest(t, a)
 				if log.Status != 500 || log.Attempts != 1 || backupCalls.Load() != 0 || !strings.Contains(response.Body.String(), "ledgergate_error") {
 					t.Fatalf("local conversion was treated as upstream failure: log=%+v body=%s", log, response.Body.String())
 				}
@@ -215,10 +206,7 @@ func TestGatewaySSELocalConversionFailureKeepsChannel(t *testing.T) {
 					body["max_tokens"] = 100
 				}
 				response = call(h, "POST", requestPath(test.protocol), jsonString(body), token)
-				log = RequestLog{}
-				if err := a.DB.Last(&log).Error; err != nil {
-					t.Fatal(err)
-				}
+				log = latestRequestForTest(t, a)
 				if response.Code != 200 || log.Status != 200 || log.ChannelID != channel.ID || primaryCalls.Load() != 2 || backupCalls.Load() != 0 {
 					t.Fatalf("native request was diverted after a local conversion error: %+v", log)
 				}
@@ -261,10 +249,7 @@ func TestGatewaySSEPrefaceKeepsTimeoutAndNoReplay(t *testing.T) {
 			channel := createChannel(t, h, cookie, "primary", primary.URL, "responses")
 			token := createGroup(t, h, cookie, []Channel{channel, createChannel(t, h, cookie, "backup", backup.URL, "responses")}, "priority")
 			response := call(h, "POST", "/v1/responses", `{"model":"my-model","stream":true,"input":"hello"}`, token)
-			var log RequestLog
-			if err := a.DB.Last(&log).Error; err != nil {
-				t.Fatal(err)
-			}
+			log := latestRequestForTest(t, a)
 			message := "上游在流中报告错误"
 			if mode == "timeout" {
 				message = errFirstOutput.Error()
@@ -306,10 +291,7 @@ func TestGatewaySSELocalSizeLimitKeepsChannel(t *testing.T) {
 	token := createGroup(t, h, cookie, []Channel{channel, createChannel(t, h, cookie, "backup", backup.URL, "responses")}, "priority")
 	for _, status := range []int{500, 200} {
 		response := call(h, "POST", "/v1/responses", `{"model":"my-model","stream":true,"input":"hello"}`, token)
-		var log RequestLog
-		if err := a.DB.Last(&log).Error; err != nil {
-			t.Fatal(err)
-		}
+		log := latestRequestForTest(t, a)
 		if response.Code != status || log.Status != status || log.Attempts != 1 || log.ChannelID != channel.ID || backupCalls.Load() != 0 {
 			t.Fatalf("size limit caused failover or cooldown: %+v backup_calls=%d", log, backupCalls.Load())
 		}

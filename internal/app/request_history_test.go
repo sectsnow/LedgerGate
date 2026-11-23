@@ -27,7 +27,7 @@ func historyDetailForTest(t *testing.T, h http.Handler, cookie string, id uint) 
 	return value.Request, value.Detail
 }
 
-func TestRequestHistoryLiveStreamAndEncryptedDetail(t *testing.T) {
+func TestRequestHistoryLiveStreamAndMemoryDetail(t *testing.T) {
 	a := testApp(t)
 	h := a.Router()
 	cookie := loginForTest(t, h)
@@ -74,10 +74,7 @@ func TestRequestHistoryLiveStreamAndEncryptedDetail(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("upstream did not start")
 	}
-	var row RequestLog
-	if a.DB.First(&row).Error != nil {
-		t.Fatal("request is invisible before upstream response")
-	}
+	row := latestRequestForTest(t, a)
 	live, detail := historyDetailForTest(t, h, cookie, row.ID)
 	if live.State != "running" || live.Status != 0 || live.Model != "my-model" || !detail.Available || !strings.Contains(detail.RequestBody, "[已隐藏]") || strings.Contains(detail.RequestBody, "hidden-request-secret") {
 		t.Fatal("incorrect live request", live.State, detail.RequestBody)
@@ -116,71 +113,65 @@ func TestRequestHistoryLiveStreamAndEncryptedDetail(t *testing.T) {
 	if final.State != "completed" || final.Status != 200 || final.OutputTokens != 3 || final.FinishedAt == nil || detail.Attempts[0].Status != 200 {
 		t.Fatal("stream completion was not finalized", final, detail)
 	}
-	var stored RequestDetail
-	if a.DB.First(&stored, row.ID).Error != nil || strings.Contains(stored.Payload, "hello") || strings.Contains(stored.Payload, "hidden-request-secret") {
-		t.Fatal("detail is missing or stored unencrypted")
-	}
-	if a.DB.Delete(&RequestLog{}, row.ID).Error != nil {
-		t.Fatal("could not remove temporary request")
-	}
-	var remaining int64
-	if a.DB.Model(&RequestDetail{}).Count(&remaining).Error != nil || remaining != 0 {
-		t.Fatal("retention would leave orphaned request contents")
+	for _, table := range []any{&RequestLog{}, &RequestDetail{}} {
+		var count int64
+		if err := a.DB.Model(table).Count(&count).Error; err != nil || count != 0 {
+			t.Fatal("request or contents persisted", count, err)
+		}
 	}
 }
 
-func TestRequestHistoryPaginationFiltersAndLegacyDetails(t *testing.T) {
+func TestRequestHistoryPaginationFiltersAndEviction(t *testing.T) {
 	a := testApp(t)
 	h := a.Router()
 	cookie := loginForTest(t, h)
-	rows := make([]RequestLog, 241)
+	rows := make([]RequestLog, 65)
 	for i := range rows {
 		rows[i] = RequestLog{RequestID: fmt.Sprintf("req-history-%03d", i), Model: fmt.Sprintf("model-%03d", i), Status: 200}
 		if i%10 == 0 {
 			rows[i].Status = 502
 		}
+		trace := a.beginRequestTrace(&rows[i])
+		a.finishRequestTrace(trace, &rows[i])
 	}
-	if a.DB.Create(&rows).Error != nil {
-		t.Fatal("could not seed historical requests")
+	for _, path := range []string{"/api/requests?page=1", "/api/requests/1"} {
+		if w := call(h, "GET", path, "", ""); w.Code != 401 {
+			t.Fatal("unauthenticated history exposed")
+		}
 	}
-	if w := call(h, "GET", "/api/requests?page=1", "", ""); w.Code != 401 {
-		t.Fatal("unauthenticated history exposed")
-	}
-	if w := call(h, "GET", "/api/requests/1", "", ""); w.Code != 401 {
-		t.Fatal("unauthenticated contents exposed")
-	}
-	var legacy []RequestLog
+	var recent []RequestLog
 	w := call(h, "GET", "/api/requests", "", cookie)
-	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &legacy) != nil || len(legacy) != 100 {
-		t.Fatal("dashboard API compatibility lost")
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &recent) != nil || len(recent) != 50 {
+		t.Fatal("dashboard cache response incorrect", w.Body.String())
 	}
 	var page struct {
-		Items []RequestLog `json:"items"`
-		Total int64        `json:"total"`
+		Items []RequestLog
+		Total int64
 	}
-	w = call(h, "GET", "/api/requests?page=3&page_size=100", "", cookie)
-	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &page) != nil || page.Total != 241 || len(page.Items) != 41 || page.Items[0].ID != rows[40].ID || page.Items[40].ID != rows[0].ID {
-		t.Fatal("history beyond 100 not accessible", w.Body.String())
+	w = call(h, "GET", "/api/requests?page=2&page_size=30", "", cookie)
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &page) != nil || page.Total != 50 || len(page.Items) != 20 || page.Items[0].ID != rows[34].ID || page.Items[19].ID != rows[15].ID {
+		t.Fatal("cache pagination incorrect", w.Body.String())
 	}
-	w = call(h, "GET", "/api/requests?page=1&q=req-history-010&state=completed", "", cookie)
+	w = call(h, "GET", "/api/requests?page=1&q=req-history-020&state=completed", "", cookie)
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &page) != nil || page.Total != 0 {
 		t.Fatal("combined filters incorrect")
 	}
-	w = call(h, "GET", "/api/requests?page=1&q=req-history-010&state=failed", "", cookie)
-	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &page) != nil || page.Total != 1 || len(page.Items) != 1 {
-		t.Fatal("request ID search incorrect")
+	w = call(h, "GET", "/api/requests?page=1&q=REQ-HISTORY-020&state=failed", "", cookie)
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &page) != nil || page.Total != 1 {
+		t.Fatal("case-insensitive search incorrect")
 	}
 	for _, query := range []string{"page=0", "page=-1", "page=abc", "page_size=201", "page_size=0", "state=invalid"} {
 		if w := call(h, "GET", "/api/requests?"+query, "", cookie); w.Code != 400 {
-			t.Fatal("invalid history query accepted", query)
+			t.Fatal("invalid query accepted", query)
 		}
 	}
-	_, payload := historyDetailForTest(t, h, cookie, rows[0].ID)
-	if payload.Available {
-		t.Fatal("old record fabricated request contents")
+	if w := call(h, "GET", fmt.Sprintf("/api/requests/%d", rows[0].ID), "", cookie); w.Code != 404 || !strings.Contains(w.Body.String(), "内存缓存") {
+		t.Fatal("eviction not explained", w.Body.String())
 	}
-	if w := call(h, "GET", "/api/requests/999999", "", cookie); w.Code != 404 {
-		t.Fatal("missing history detail not reported")
+	for _, path := range []string{"/api/requests/clear", "/api/requests/clear/preview"} {
+		if w := call(h, "POST", path, `{}`, cookie); w.Code != 404 {
+			t.Fatal("obsolete clear API remains", w.Code)
+		}
 	}
 }
 
@@ -212,7 +203,7 @@ func TestRequestHistoryCancellationAndAttempts(t *testing.T) {
 	response.Body.Close()
 	var row RequestLog
 	for i := 0; i < 100; i++ {
-		a.DB.Last(&row)
+		row = latestRequestForTest(t, a)
 		if row.State == "cancelled" {
 			break
 		}
@@ -234,10 +225,12 @@ func TestRequestHistoryRestartAndBodyBounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	active := RequestLog{RequestID: "interrupted", State: "streaming", Status: 0, CreatedAt: time.Now().Add(-time.Minute)}
-	if a.DB.Create(&active).Error != nil {
-		t.Fatal("could not seed interrupted request")
-	}
+	finished := RequestLog{RequestID: "finished", Status: 200, InputTokens: 100, CostMicros: 123}
+	trace := a.beginRequestTrace(&finished)
+	trace.setRequest(finished, object{"input": "memory-only"})
+	a.finishRequestTrace(trace, &finished)
+	ongoing := RequestLog{RequestID: "ongoing"}
+	a.beginRequestTrace(&ongoing)
 	if err := a.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -246,15 +239,22 @@ func TestRequestHistoryRestartAndBodyBounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer a.Close()
-	var recovered RequestLog
-	if a.DB.First(&recovered, active.ID).Error != nil || recovered.State != "interrupted" || recovered.Status != 502 || recovered.FinishedAt == nil || recovered.DurationMS < 59000 {
-		t.Fatal("restart left a permanently running request", recovered)
+	rows, active := a.requestSummaries()
+	if len(rows) != 0 || active != 0 {
+		t.Fatal("request cache survived restart")
+	}
+	if _, _, found := a.cachedRequestDetail(finished.ID); found {
+		t.Fatal("request body survived restart")
+	}
+	var day RequestDay
+	if err := a.DB.First(&day).Error; err != nil || day.Requests != 1 || day.InputTokens != 100 || day.CostMicros != 123 {
+		t.Fatal("restart lost usage", day, err)
 	}
 	body, truncated := boundedLogJSON(object{"api_key": "never-expose", "nested": []any{object{"refresh_token": "never-expose"}}, "text": strings.Repeat("x", requestBodyLimit*2)})
 	if !truncated || len(body) > requestBodyLimit || strings.Contains(body, "never-expose") {
 		t.Fatal("request body bounds or redaction failed")
 	}
-	trace := &requestTrace{log: RequestLog{CreatedAt: time.Now(), Stream: true}}
+	trace = &requestTrace{log: RequestLog{CreatedAt: time.Now(), Stream: true}}
 	trace.appendResponse([]byte(strings.Repeat("z", requestBodyLimit*2)))
 	if len(trace.response) > requestBodyLimit || !trace.payload().ResponseTruncated {
 		t.Fatal("response capture is unbounded")

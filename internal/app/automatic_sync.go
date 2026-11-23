@@ -88,21 +88,21 @@ func (a *App) discoverModels(parent context.Context) (resultErr error) {
 				if err == nil {
 					models, err = normalizeChannelModels(models)
 				}
-				now := time.Now()
-				updates := map[string]any{"models_checked_at": now, "models_sync_error": ""}
+				updates := map[string]any{}
 				if err != nil {
 					updates["models_sync_error"] = err.Error()
 					failed.Add(1)
-				} else {
-					updates["discovered_models"] = jsonString(models)
 				}
 				if err := a.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 					var current Channel
 					if err := tx.First(&current, channel.ID).Error; err != nil {
 						return err
 					}
-					if channelModelRevision(current) != channelModelRevision(channel) {
+					if channelModelDiscoveryRevision(current) != channelModelDiscoveryRevision(channel) {
 						return nil
+					}
+					if err == nil {
+						updates = channelModelDiscoveryUpdates(current, models)
 					}
 					return tx.Model(&current).Updates(updates).Error
 				}); err != nil {

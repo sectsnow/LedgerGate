@@ -296,7 +296,7 @@ func (a *App) prepareTransferExport(doc *transferDocument) error {
 		if row.Models == "" {
 			row.Models = "[]"
 		}
-		row.DiscoveredModels, row.ModelsSyncError, row.AutoDisabledReason = "", "", ""
+		row.DiscoveredModels, row.ModelsBaseline, row.ModelsSyncError, row.AutoDisabledReason = "", "", "", ""
 		row.ModelsCheckedAt = nil
 	}
 	for i := range doc.Keys {

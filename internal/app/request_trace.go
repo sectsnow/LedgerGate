@@ -62,21 +62,20 @@ func requestState(log RequestLog) string {
 }
 
 func (a *App) beginRequestTrace(log *RequestLog) *requestTrace {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.nextRequestID++
+	log.ID = a.nextRequestID
+	if log.CreatedAt.IsZero() {
+		log.CreatedAt = time.Now()
+	}
 	initial := *log
 	initial.State, initial.Status = "running", 0
-	if err := a.DB.Create(&initial).Error; err != nil {
-		slog.Error("请求开始记录失败", "request_id", log.RequestID, "error", err)
-	}
-	log.ID, log.CreatedAt = initial.ID, initial.CreatedAt
 	t := &requestTrace{log: initial, attempts: []requestAttempt{}}
-	if initial.ID != 0 {
-		a.mu.Lock()
-		if a.activeRequests == nil {
-			a.activeRequests = map[uint]*requestTrace{}
-		}
-		a.activeRequests[initial.ID] = t
-		a.mu.Unlock()
+	if a.activeRequests == nil {
+		a.activeRequests = map[uint]*requestTrace{}
 	}
+	a.activeRequests[initial.ID] = t
 	return t
 }
 
@@ -95,14 +94,6 @@ func (a *App) traceAttempt(t *requestTrace, log RequestLog) {
 	t.log.State, t.log.Status, t.log.Error, t.log.FirstByteMS = "running", 0, "", firstByte
 	t.attempts = append(t.attempts, requestAttempt{ChannelID: log.ChannelID, ChannelName: log.ChannelName, Model: log.UpstreamModel, Protocol: log.UpstreamProtocol, StartedAt: time.Now()})
 	t.mu.Unlock()
-	if log.ID != 0 {
-		if err := a.DB.Model(&RequestLog{}).Where("id = ?", log.ID).Updates(map[string]any{
-			"model": log.Model, "stream": log.Stream, "channel_id": log.ChannelID, "channel_name": log.ChannelName,
-			"upstream_model": log.UpstreamModel, "upstream_protocol": log.UpstreamProtocol, "attempts": log.Attempts,
-		}).Error; err != nil {
-			slog.Error("请求路由记录失败", "request_id", log.RequestID, "error", err)
-		}
-	}
 }
 
 func (t *requestTrace) endAttempt(status int, message string) {
@@ -164,6 +155,10 @@ func (t *requestTrace) payload() requestPayload {
 	raw, stream := string(t.response), t.log.Stream
 	t.mu.Unlock()
 	payload.ResponseBody = safeResponseBody(raw, stream)
+	if len(payload.ResponseBody) > requestBodyLimit {
+		payload.ResponseBody = strings.ToValidUTF8(payload.ResponseBody[:requestBodyLimit], "")
+		payload.ResponseTruncated = true
+	}
 	return payload
 }
 
@@ -182,33 +177,19 @@ func (a *App) finishRequestTrace(t *requestTrace, log *RequestLog) {
 	log.FirstByteMS = t.log.FirstByteMS
 	t.log = *log
 	t.mu.Unlock()
-	payload := a.seal(jsonString(t.payload()))
-	originalID := log.ID
+	payload := t.payload()
 	err := a.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Save(log).Error; err != nil {
+		if err := recordRequestUsage(tx, log); err != nil {
 			return err
 		}
-		if err := debitKey(tx, log); err != nil {
-			return err
-		}
-		return tx.Create(&RequestDetail{RequestLogID: log.ID, Payload: payload}).Error
+		return debitKey(tx, log)
 	})
 	if err != nil {
-		slog.Error("请求详情保存失败", "request_id", log.RequestID, "error", err)
-		if originalID == 0 {
-			log.ID = 0
-		}
-		if fallback := a.DB.Transaction(func(tx *gorm.DB) error {
-			if err := tx.Save(log).Error; err != nil {
-				return err
-			}
-			return debitKey(tx, log)
-		}); fallback != nil {
-			slog.Error("请求结果保存失败", "request_id", log.RequestID, "error", fallback)
-		}
+		slog.Error("请求统计保存失败", "request_id", log.RequestID, "error", err)
 	}
 	a.mu.Lock()
 	delete(a.activeRequests, log.ID)
+	a.cacheFinishedRequest(*log, payload)
 	a.mu.Unlock()
 }
 
@@ -286,7 +267,7 @@ func boundedLogJSON(value any) (string, bool) {
 	if truncated {
 		raw = raw[:requestBodyLimit]
 	}
-	return strings.ToValidUTF8(string(raw), "�"), truncated
+	return strings.ToValidUTF8(string(raw), ""), truncated
 }
 
 func safeResponseBody(raw string, stream bool) string {

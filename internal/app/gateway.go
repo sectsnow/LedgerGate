@@ -226,6 +226,7 @@ func (a *App) forward(c *gin.Context, protocol string) {
 	excludedRoutes, excludedChannels := map[uint]bool{}, map[uint]bool{}
 	memberAttempts := map[uint]int{}
 	var retry *candidate
+	retryProbe := false
 	retryRevision := ""
 	var releasePick func()
 	defer func() {
@@ -239,14 +240,14 @@ func (a *App) forward(c *gin.Context, protocol string) {
 			return
 		}
 		config := group.relayConfig()
-		if group.Strategy == "priority" && !probe && retryable && memberAttempts[item.Route.ID] < config.MemberMaxAttempts {
+		if group.Strategy == "priority" && retryable && memberAttempts[item.Route.ID] < config.MemberMaxAttempts {
 			if log.Attempts < options.MaxAttempts {
 				timer := time.NewTimer(time.Duration(config.MemberRetryIntervalSeconds) * time.Second)
 				defer timer.Stop()
 				select {
 				case <-requestCtx.Done():
 				case <-timer.C:
-					retry, retryRevision = &item, groupRoutingRevision(group)
+					retry, retryProbe, retryRevision = &item, probe, groupRoutingRevision(group)
 				}
 			}
 			return
@@ -254,7 +255,7 @@ func (a *App) forward(c *gin.Context, protocol string) {
 		a.recordMemberFailure(group, item, channelFailure, header, log.Status, log.Error)
 	}
 	for {
-		if releasePick != nil {
+		if releasePick != nil && retry == nil {
 			releasePick()
 			releasePick = nil
 		}
@@ -291,14 +292,18 @@ func (a *App) forward(c *gin.Context, protocol string) {
 		ok, probe := false, false
 		if retry != nil && retryRevision == groupRoutingRevision(group) {
 			for _, current := range candidates {
-				if current.Route.ID == retry.Route.ID && memberAttempts[current.Route.ID] < group.relayConfig().MemberMaxAttempts && a.memberRetryAvailable(current) {
-					item, ok = current, true
+				if current.Route.ID == retry.Route.ID && memberAttempts[current.Route.ID] < group.relayConfig().MemberMaxAttempts && a.memberRetryAvailable(group, current, retryProbe) {
+					item, ok, probe = current, true, retryProbe
 					break
 				}
 			}
 		}
 		retry = nil
 		if !ok {
+			if releasePick != nil {
+				releasePick()
+				releasePick = nil
+			}
 			item, ok, probe = a.pickGroup(group, candidates, excludedRoutes, excludedChannels)
 		}
 		if !ok {
@@ -354,9 +359,18 @@ func (a *App) forward(c *gin.Context, protocol string) {
 			}
 			continue
 		}
-		attemptCtx, cancel := context.WithTimeout(requestCtx, time.Duration(item.Channel.TimeoutSeconds)*time.Second)
+		var attemptCtx context.Context
+		var cancel context.CancelFunc
+		firstOutputTimeout := time.Duration(options.FirstOutputSeconds) * time.Second
+		if log.Stream {
+			// 流式渠道期限只约束首输出，生成阶段由空闲和整次请求预算约束。
+			attemptCtx, cancel = context.WithCancel(requestCtx)
+			firstOutputTimeout = min(firstOutputTimeout, time.Duration(item.Channel.TimeoutSeconds)*time.Second)
+		} else {
+			attemptCtx, cancel = context.WithTimeout(requestCtx, time.Duration(item.Channel.TimeoutSeconds)*time.Second)
+		}
 		ctx, cancelCause := context.WithCancelCause(attemptCtx)
-		guard := newUpstreamGuard(cancelCause, time.Duration(options.FirstOutputSeconds)*time.Second, time.Duration(options.StreamIdleSeconds)*time.Second)
+		guard := newUpstreamGuard(cancelCause, firstOutputTimeout, time.Duration(options.StreamIdleSeconds)*time.Second)
 		guard.stream = log.Stream
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint(item.Channel.BaseURL, requestPath(upstreamProtocol)), bytes.NewBufferString(jsonString(outbound)))
 		if err != nil {
@@ -472,12 +486,9 @@ func (a *App) forward(c *gin.Context, protocol string) {
 			log.Status, log.Error = 504, "请求已达到总时间上限"
 		}
 		trace.endAttempt(log.Status, log.Error)
-		if !localError && requestCtx.Err() == nil {
-			if c.Writer.Written() {
-				a.recordMemberFailure(group, item, false, nil, log.Status, log.Error)
-			} else {
-				failure(item, probe, true, false, nil)
-			}
+		// 已出流的失败只影响本次请求，不重放，也不据此冷却成员。
+		if !localError && requestCtx.Err() == nil && !c.Writer.Written() {
+			failure(item, probe, true, false, nil)
 		}
 		if c.Writer.Written() {
 			if log.Stream {

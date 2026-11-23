@@ -1,18 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { ChannelSelection } from "./ChannelBatch";
-
-export function channelModelNames(raw = ""): string[] {
-  try {
-    const value = JSON.parse(raw || "[]");
-    if (Array.isArray(value)) {
-      return value.filter((item): item is string => typeof item === "string");
-    }
-  } catch {
-    /* 旧记录无法解析时可重新填写模型列表。 */
-  }
-  return [];
-}
+export { channelModelNames } from "./channelModels";
 
 function splitModels(text: string): string[] {
   return [...new Set(text.split(/[\n,，]+/).map((name) => name.trim()).filter(Boolean))];
