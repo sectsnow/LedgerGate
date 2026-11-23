@@ -153,6 +153,7 @@ type RequestLog struct {
 	DurationMS         int64              `json:"duration_ms"`
 	StartedAt          *time.Time         `json:"started_at"`
 	FirstTokenMS       *int64             `json:"first_token_ms"`
+	FirstContentMS     *int64             `json:"first_content_ms"`
 	GenerationMS       *int64             `json:"generation_ms"`
 	CostDetail         *requestCostDetail `json:"cost_detail" gorm:"serializer:json;type:text"`
 	Error              string             `json:"error"`
@@ -164,6 +165,10 @@ type RequestLog struct {
 	UpstreamProtocol   string             `json:"upstream_protocol" gorm:"not null;default:''"`
 	FirstByteMS        *int64             `json:"first_byte_ms"`
 	FinishedAt         *time.Time         `json:"finished_at"`
+	RoutingReason      string             `json:"routing_reason" gorm:"-"`
+	RetryAt            *time.Time         `json:"retry_at" gorm:"-"`
+	FinishReason       string             `json:"finish_reason" gorm:"-"`
+	IncompleteReason   string             `json:"incomplete_reason" gorm:"-"`
 }
 
 type RequestDetail struct {
@@ -186,22 +191,24 @@ type RequestDay struct {
 }
 
 type RequestHour struct {
-	Hour                int64  `gorm:"primaryKey;autoIncrement:false"`
-	ChannelID           uint   `gorm:"primaryKey;autoIncrement:false"`
-	Model               string `gorm:"primaryKey"`
-	ChannelName         string
-	Requests            int64
-	Errors              int64
-	Successes           int64
-	InputTokens         int64
-	OutputTokens        int64
-	CostMicros          int64
-	CostUnknownRequests int64
-	DurationMS          int64
-	FirstTokenMS        int64
-	FirstTokenCount     int64
-	GenerationMS        int64
-	GenerationTokens    int64
+	Hour                    int64  `gorm:"primaryKey;autoIncrement:false"`
+	ChannelID               uint   `gorm:"primaryKey;autoIncrement:false"`
+	Model                   string `gorm:"primaryKey"`
+	ChannelName             string
+	Requests                int64
+	Errors                  int64
+	Successes               int64
+	InputTokens             int64
+	OutputTokens            int64
+	CostMicros              int64
+	CostUnknownRequests     int64
+	DurationMS              int64
+	FirstTokenMS            int64
+	FirstTokenCount         int64
+	SemanticFirstTokenMS    int64 `gorm:"not null;default:0"`
+	SemanticFirstTokenCount int64 `gorm:"not null;default:0"`
+	GenerationMS            int64
+	GenerationTokens        int64
 }
 
 type Alert struct {

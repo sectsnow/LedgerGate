@@ -76,6 +76,9 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=sha,format=long
+      - name: 记录构建时间
+        id: buildinfo
+        run: echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
       - name: 构建待验收镜像
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -83,6 +86,10 @@ jobs:
           platforms: linux/amd64
           load: true
           tags: ledgergate:ci
+          build-args: |
+            VCS_REF=${{ github.sha }}
+            BUILD_DATE=${{ steps.buildinfo.outputs.built_at }}
+            VCS_MODIFIED=false
           labels: ${{ steps.metadata.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -125,6 +132,12 @@ jobs:
               assert int(fields["CapEff"].strip(), 16) == 0xA
 
           verify_process_user()
+          build = json.loads(request("/healthz"))["build"]
+          expected_version = json.loads(subprocess.check_output(["git", "show", "HEAD:web/package.json"], text=True))["version"]
+          assert build["version"] == expected_version, build
+          assert build["revision"] == os.environ["GITHUB_SHA"], build
+          assert build["built_at"] == "${{ steps.buildinfo.outputs.built_at }}", build
+          assert build["modified"] is False, build
           assert json.loads(request("/api/setup"))["setup_required"] is True
           assets = re.findall(r'(?:src|href)="(/assets/[^"]+)"', request("/").decode())
           assert assets, "缺少前端构建产物"
@@ -132,6 +145,7 @@ jobs:
               assert request(asset), asset
           password = secrets.token_urlsafe(24)
           assert json.loads(request("/api/setup", {"password": password, "confirm_password": password}))["ok"] is True
+          assert json.loads(request("/api/version")) == build
           checksum_command = ["docker", "compose", "-p", "ledgergate-ci", "exec", "-T", "ledgergate", "sha256sum", "/data/master.key"]
           master_key_checksum = subprocess.check_output(checksum_command, text=True)
           subprocess.run(["docker", "compose", "-p", "ledgergate-ci", "stop", "ledgergate"], check=True)
@@ -142,6 +156,7 @@ jobs:
           assert json.loads(request("/api/setup"))["setup_required"] is False
           assert json.loads(request("/api/login", {"password": password}))["ok"] is True
           assert json.loads(request("/api/session"))["authenticated"] is True
+          assert json.loads(request("/api/version")) == build
           PY
       - name: 输出容器日志并清理验收容器
         if: always()
@@ -160,5 +175,9 @@ jobs:
           context: .
           platforms: linux/amd64
           push: true
+          build-args: |
+            VCS_REF=${{ github.sha }}
+            BUILD_DATE=${{ steps.buildinfo.outputs.built_at }}
+            VCS_MODIFIED=false
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}

@@ -9,9 +9,9 @@ import (
 
 func (a *App) listRequests(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
-	page, size := 1, 100
-	paged := c.Request.URL.RawQuery != ""
-	if paged {
+	page, size := 1, 0
+	params := c.Request.URL.Query()
+	if params.Has("page") || params.Has("page_size") {
 		var err error
 		page, err = strconv.Atoi(c.DefaultQuery("page", "1"))
 		if err != nil || page < 1 || page > 10000000 {
@@ -49,9 +49,11 @@ func (a *App) listRequests(c *gin.Context) {
 		items = append(items, log)
 	}
 	total := len(items)
-	start := min((page-1)*size, total)
-	items = items[start:min(start+size, total)]
-	if !paged {
+	if size > 0 {
+		start := min((page-1)*size, total)
+		items = items[start:min(start+size, total)]
+	}
+	if c.Request.URL.RawQuery == "" {
 		c.JSON(200, items)
 		return
 	}

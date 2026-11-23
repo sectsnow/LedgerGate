@@ -13,6 +13,7 @@ import (
 
 var errFirstOutput = errors.New("等待上游首个有效输出超时")
 var errStreamIdle = errors.New("上游流长时间无数据")
+var errChannelResponseTimeout = errors.New("等待上游完整响应超时")
 
 type upstreamGuard struct {
 	mu           sync.Mutex
@@ -44,7 +45,9 @@ func (guard *upstreamGuard) attach(body io.ReadCloser) {
 	guard.mu.Lock()
 	defer guard.mu.Unlock()
 	guard.body = body
-	guard.idle = time.AfterFunc(guard.idleDuration, func() { guard.expire(errStreamIdle) })
+	if guard.stream {
+		guard.idle = time.AfterFunc(guard.idleDuration, func() { guard.expire(errStreamIdle) })
+	}
 }
 
 func (guard *upstreamGuard) Read(data []byte) (int, error) {

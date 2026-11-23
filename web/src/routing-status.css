@@ -1,0 +1,26 @@
+.route-runtime-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.route-runtime-summary > span { display: flex; align-items: flex-start; gap: 6px; }
+.route-runtime-summary svg { flex-shrink: 0; margin-top: 3px; }
+.route-runtime {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 5px;
+  min-width: 160px;
+  max-width: 320px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+.route-runtime[data-state="current"],
+.route-runtime[data-state="probing"] {
+  color: var(--accent);
+}

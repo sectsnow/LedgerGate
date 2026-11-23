@@ -107,7 +107,7 @@ func TestDiscoveryDoesNotReplaceSelectedModelsAndQualityUsesSummaries(t *testing
 		t.Fatal("automatic discovery replaced curated selection")
 	}
 	now := time.Now().Add(-time.Minute)
-	rows := []RequestLog{{ChannelID: channel.ID, ChannelName: channel.Name, Model: "public", Status: 200, State: "completed", CreatedAt: now, InputTokens: 20, OutputTokens: 10, CostMicros: 40, FirstTokenMS: intPointer(100), GenerationMS: intPointer(1000), DurationMS: 1100}, {ChannelID: channel.ID, ChannelName: channel.Name, Model: "public", Status: 500, State: "failed", CreatedAt: now, DurationMS: 100}, {ChannelID: channel.ID, Model: "public", State: "running", CreatedAt: now}}
+	rows := []RequestLog{{MetricsVersion: 2, ChannelID: channel.ID, ChannelName: channel.Name, Model: "public", Status: 200, State: "completed", CreatedAt: now, InputTokens: 20, OutputTokens: 10, CostMicros: 40, FirstTokenMS: intPointer(100), GenerationMS: intPointer(1000), DurationMS: 1100}, {ChannelID: channel.ID, ChannelName: channel.Name, Model: "public", Status: 500, State: "failed", CreatedAt: now, DurationMS: 100}, {ChannelID: channel.ID, Model: "public", State: "running", CreatedAt: now}}
 	requestUsageForTest(t, a, rows)
 	h := a.Router()
 	cookie := loginForTest(t, h)
@@ -119,7 +119,16 @@ func TestDiscoveryDoesNotReplaceSelectedModelsAndQualityUsesSummaries(t *testing
 		t.Fatal(response.Body.String())
 	}
 	row := result.Items[0]
-	if row.Requests != 2 || row.Successes != 1 || row.AverageFirstTokenMS == nil || *row.AverageFirstTokenMS != 100 || row.OutputPerSecond == nil || *row.OutputPerSecond != 10 {
+	if row.Requests != 2 || row.Successes != 1 || row.AverageFirstTokenMS == nil || *row.AverageFirstTokenMS != 100 || row.OutputPerSecond == nil || *row.OutputPerSecond != 10*1000.0/1200 {
 		t.Fatalf("incorrect quality metrics %+v", row)
+	}
+	requestUsageForTest(t, a, []RequestLog{{MetricsVersion: 1, ChannelID: channel.ID, ChannelName: channel.Name, Model: "public", Status: 200, State: "completed", CreatedAt: now, OutputTokens: 10, FirstTokenMS: intPointer(900), DurationMS: 1000}})
+	response = call(h, "GET", "/api/request-quality?group_by=model", "", cookie)
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &result) != nil || len(result.Items) != 1 {
+		t.Fatal(response.Body.String())
+	}
+	row = result.Items[0]
+	if row.Requests != 3 || row.AverageFirstTokenMS == nil || *row.AverageFirstTokenMS != 100 || row.OutputPerSecond == nil || *row.OutputPerSecond != 20*1000.0/2200 {
+		t.Fatalf("legacy content timing polluted semantic latency or full-duration TPS: %+v", row)
 	}
 }

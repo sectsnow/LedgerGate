@@ -90,7 +90,8 @@ func (a *App) migrateRequestHistory() error {
 		}
 		if err := tx.Exec(`INSERT INTO request_hours
 			(hour, channel_id, model, channel_name, requests, errors, successes, input_tokens, output_tokens,
-			 cost_micros, cost_unknown_requests, duration_ms, first_token_ms, first_token_count, generation_ms, generation_tokens)
+			 cost_micros, cost_unknown_requests, duration_ms, first_token_ms, first_token_count,
+			 semantic_first_token_ms, semantic_first_token_count, generation_ms, generation_tokens)
 			SELECT (CAST(strftime('%s', created_at) AS INTEGER) / 3600) * 3600,
 			 channel_id, model, COALESCE(MAX(channel_name), ''), COUNT(*),
 			 SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), SUM(CASE WHEN status >= 200 AND status < 400 THEN 1 ELSE 0 END),
@@ -98,6 +99,8 @@ func (a *App) migrateRequestHistory() error {
 			 COALESCE(SUM(CASE WHEN cost_status = 'unknown' THEN 0 ELSE cost_micros END), 0),
 			 SUM(CASE WHEN cost_status = 'unknown' THEN 1 ELSE 0 END), COALESCE(SUM(duration_ms), 0),
 			 COALESCE(SUM(first_token_ms), 0), COUNT(first_token_ms),
+			 COALESCE(SUM(CASE WHEN metrics_version >= 2 THEN first_token_ms ELSE 0 END), 0),
+			 SUM(CASE WHEN metrics_version >= 2 AND first_token_ms IS NOT NULL THEN 1 ELSE 0 END),
 			 COALESCE(SUM(CASE WHEN generation_ms > 0 THEN generation_ms ELSE 0 END), 0),
 			 COALESCE(SUM(CASE WHEN generation_ms > 0 THEN output_tokens ELSE 0 END), 0)
 			FROM request_logs GROUP BY 1, channel_id, model`).Error; err != nil {

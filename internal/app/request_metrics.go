@@ -86,25 +86,51 @@ func reasoningEffort(body object) string {
 }
 
 type requestTimings struct {
-	Started  time.Time
-	First    time.Time
-	Finished time.Time
+	Started      time.Time
+	First        time.Time
+	FirstContent time.Time
+	Finished     time.Time
 }
 
-func (t *requestTrace) recordFirstToken(ms int64) {
+func (t *requestTrace) recordTimings(timing requestTimings) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.log.FirstTokenMS == nil {
-		t.log.FirstTokenMS = intPointer(ms)
+	if !timing.First.IsZero() {
+		t.log.FirstTokenMS = intPointer(timing.First.Sub(timing.Started).Milliseconds())
+	}
+	if !timing.FirstContent.IsZero() {
+		t.log.FirstContentMS = intPointer(timing.FirstContent.Sub(timing.Started).Milliseconds())
 	}
 }
 
-func (timing *requestTimings) observe(event sseEvent, protocol string) bool {
-	if !timing.First.IsZero() || !streamEventHasOutput(event, protocol) {
+func (timing *requestTimings) observe(event sseEvent, protocol string, received time.Time) bool {
+	changed := false
+	if timing.First.IsZero() && streamEventStartsFirstToken(event, protocol) {
+		timing.First = received
+		changed = true
+	}
+	if timing.FirstContent.IsZero() && streamEventHasOutput(event, protocol) {
+		timing.FirstContent = received
+		changed = true
+	}
+	return changed
+}
+
+// Responses 首字沿用 Sub2API 默认语义口径；不据此提交响应或停止首输出保护。
+func streamEventStartsFirstToken(event sseEvent, protocol string) bool {
+	if protocol != "responses" {
+		return streamEventHasOutput(event, protocol)
+	}
+	value, err := decodeJSON([]byte(event.Data))
+	if err != nil {
 		return false
 	}
-	timing.First = time.Now()
-	return true
+	switch event.kind(obj(value)) {
+	case "", "response.created", "response.queued", "response.in_progress", "response.metadata", "codex.rate_limits", "codex.response.metadata", "keepalive", "ping", "error", "response.failed", "response.cancelled":
+		return false
+	default:
+		return true
+	}
 }
 
 func streamEventHasOutput(event sseEvent, protocol string) bool {
@@ -143,7 +169,7 @@ func streamEventHasOutput(event sseEvent, protocol string) bool {
 		return false
 	}
 	switch kind {
-	case "response.output_text.delta", "response.refusal.delta", "response.reasoning_text.delta", "response.reasoning_summary_text.delta", "response.function_call_arguments.delta":
+	case "response.output_text.delta", "response.refusal.delta", "response.reasoning_text.delta", "response.reasoning_summary_text.delta", "response.function_call_arguments.delta", "response.custom_tool_call_input.delta":
 		return str(body["delta"]) != ""
 	case "response.output_text.done", "response.reasoning_text.done", "response.reasoning_summary_text.done":
 		return str(body["text"]) != ""
@@ -151,20 +177,32 @@ func streamEventHasOutput(event sseEvent, protocol string) bool {
 		return str(body["refusal"]) != ""
 	case "response.function_call_arguments.done":
 		return str(body["arguments"]) != ""
+	case "response.custom_tool_call_input.done":
+		return str(body["input"]) != ""
 	case "response.content_part.added", "response.content_part.done", "response.reasoning_summary_part.added", "response.reasoning_summary_part.done":
 		part := obj(body["part"])
 		return str(part["text"]) != "" || str(part["refusal"]) != ""
 	case "response.output_item.added", "response.output_item.done":
-		item := obj(body["item"])
-		if str(item["type"]) == "function_call" && str(item["name"]) != "" {
-			return true
+		return responseItemHasContent(obj(body["item"]))
+	case "response.completed", "response.incomplete", "response.done":
+		for _, raw := range array(obj(body["response"])["output"]) {
+			if responseItemHasContent(obj(raw)) {
+				return true
+			}
 		}
-		for _, field := range []string{"content", "summary"} {
-			for _, raw := range array(item[field]) {
-				part := obj(raw)
-				if str(part["text"]) != "" || str(part["refusal"]) != "" {
-					return true
-				}
+	}
+	return false
+}
+
+func responseItemHasContent(item object) bool {
+	if str(item["arguments"]) != "" || str(item["input"]) != "" || str(item["type"]) == "function_call" && str(item["name"]) != "" {
+		return true
+	}
+	for _, field := range []string{"content", "summary"} {
+		for _, raw := range array(item[field]) {
+			part := obj(raw)
+			if str(part["text"]) != "" || str(part["refusal"]) != "" {
+				return true
 			}
 		}
 	}
@@ -177,8 +215,11 @@ func (timing requestTimings) apply(log *RequestLog) {
 	log.DurationMS = completed.Sub(timing.Started).Milliseconds()
 	if !timing.First.IsZero() {
 		log.FirstTokenMS = intPointer(timing.First.Sub(timing.Started).Milliseconds())
+	}
+	if !timing.FirstContent.IsZero() {
+		log.FirstContentMS = intPointer(timing.FirstContent.Sub(timing.Started).Milliseconds())
 		if !timing.Finished.IsZero() {
-			log.GenerationMS = intPointer(max(timing.Finished.Sub(timing.First).Milliseconds(), 0))
+			log.GenerationMS = intPointer(max(timing.Finished.Sub(timing.FirstContent).Milliseconds(), 0))
 		}
 	}
 }
@@ -253,7 +294,9 @@ func (a *App) recordRequestCost(log *RequestLog, result completion, group Group,
 		return
 	}
 	log.CostSource = price.Source
-	if price.Stale { log.CostWarning = strings.Trim(log.CostWarning+"；价格采集失败，沿用上次报价", "；") }
+	if price.Stale {
+		log.CostWarning = strings.Trim(log.CostWarning+"；价格采集失败，沿用上次报价", "；")
+	}
 	detail := &requestCostDetail{Mode: price.Mode, Rates: price.ratesFor(result.Input), UnitPrice: price.UnitPrice, Source: price.Source, SourceURL: price.SourceURL, PriceModel: price.Model, Reference: price.Reference, Note: price.Note, BaseCostMicros: log.CostMicros, Multiplier: rate.Multiplier, MultiplierStale: rate.Stale, RateGroup: rate.Group}
 	if price.MultiplierIncluded {
 		detail.RatesIncludeMultiplier, detail.MultiplierApplied = true, true

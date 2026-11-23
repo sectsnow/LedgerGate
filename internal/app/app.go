@@ -34,6 +34,7 @@ type channelState struct {
 	Until   time.Time
 	Error   string
 	Probing bool
+	Status  int
 }
 
 type App struct {

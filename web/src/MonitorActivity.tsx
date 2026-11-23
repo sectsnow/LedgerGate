@@ -1,10 +1,15 @@
 import { useEffect, useState, type ComponentType, type ReactNode } from "react";
-import { ArrowDownLeft, ArrowUpRight, Bell, ChevronLeft, ChevronRight, Megaphone, Search } from "lucide-react";
+import { ArrowDownLeft, ArrowUpDown, ArrowUpRight, Bell, CalendarClock, CalendarDays, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, CirclePause, Inbox, LoaderCircle, Megaphone, Search, Wallet } from "lucide-react";
 import { api, type AccountRow, type ActivityPage, type Alert, type AlertPage, type Announcement, type AnnouncementPage, type Data } from "./api";
 import "./monitor-activity.css";
 
 type DialogComponent = ComponentType<{ title: string; children: ReactNode; close: () => void }>;
 const kinds: Record<string, string> = { monitor_error: "账户采集异常", recovered: "账户采集恢复", monitor_warning: "部分采集异常", monitor_warning_recovered: "扩展采集恢复", low_balance: "余额偏低", rates_changed: "倍率变动", announcement: "公告更新", channel_auto_disabled: "渠道自动停用", subscription_expiring: "订阅到期", subscription_daily: "订阅日余量", subscription_weekly: "订阅周余量", subscription_monthly: "订阅月余量" };
+const eventIcons: Record<string, typeof Bell> = {
+  monitor_error: CircleAlert, monitor_warning: CircleAlert, recovered: CircleCheck, monitor_warning_recovered: CircleCheck,
+  low_balance: Wallet, rates_changed: ArrowUpDown, announcement: Megaphone, channel_auto_disabled: CirclePause,
+  subscription_expiring: CalendarClock, subscription_daily: CalendarDays, subscription_weekly: CalendarDays, subscription_monthly: CalendarDays,
+};
 const deliveryNames: Record<string, string> = { local: "本地记录", pending: "等待发送", sent: "已送达", failed: "发送失败", cooldown: "冷却期仅记录", partial: "部分送达", cancelled: "已取消" };
 const date = (value: string | null) => value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "时间未提供";
 const rate = (value: number | null) => value == null ? "未提供" : `${value.toLocaleString("zh-CN", { maximumFractionDigits: 10 })}×`;
@@ -17,8 +22,8 @@ function announcementText(content: string) {
   return template.content.textContent?.trim() || "";
 }
 
-function Empty({ children }: { children: ReactNode }) {
-  return <div className="empty monitor-empty">{children}</div>;
+function Empty({ children, icon = <Inbox size={25} aria-hidden="true" /> }: { children: ReactNode; icon?: ReactNode }) {
+  return <div className="empty monitor-empty"><div className="empty-symbol">{icon}</div>{children}</div>;
 }
 
 function RateChanges({ row }: { row: Alert }) {
@@ -33,23 +38,26 @@ function RateChanges({ row }: { row: Alert }) {
 }
 
 function AlertList({ rows, rates = false }: { rows: Alert[]; rates?: boolean }) {
-  if (!rows.length) return <Empty>{rates ? "暂无倍率变动。首次采集建立基线，后续真实变动会记录在这里。" : "暂无告警。余额、采集、倍率、公告及订阅事件会记录在这里。"}</Empty>;
-  return <div className="monitor-list">{rows.map(row => <article className="monitor-entry" key={row.id}>
-    <span className={`monitor-symbol ${row.kind.includes("recovered") ? "good" : ""}`}><Bell size={16} /></span>
+  if (!rows.length) return <Empty icon={rates ? <ArrowUpDown size={25} aria-hidden="true" /> : <Bell size={25} aria-hidden="true" />}>{rates ? "暂无倍率变动。首次采集建立基线，后续真实变动会记录在这里。" : "暂无告警。余额、采集、倍率、公告及订阅事件会记录在这里。"}</Empty>;
+  return <div className="monitor-list">{rows.map(row => {
+    const Icon = eventIcons[row.kind] || Bell;
+    return <article className="monitor-entry" key={row.id}>
+    <span className={`monitor-symbol ${row.kind.includes("recovered") ? "good" : ""}`}><Icon size={16} aria-hidden="true" /></span>
     <div className="monitor-entry-body"><h3>{row.title}</h3>
       {row.kind === "rates_changed" ? <RateChanges row={row} /> : <p className="monitor-message">{row.detail}</p>}
       <div className="monitor-meta"><time dateTime={row.created_at}>{date(row.created_at)}</time><span>{kinds[row.kind] || row.kind}</span><span className={`badge ${row.delivery}`}>{deliveryNames[row.delivery] || row.delivery}</span></div>
       {row.delivery_error && <p className="card-error">{row.delivery_error} · 已尝试 {row.attempts} 次</p>}
       {!!row.deliveries?.length && <details className="notification-delivery-details"><summary>通知投递 · {row.deliveries.length} 个渠道</summary>{row.deliveries.map(delivery => <div className="notification-delivery-line" key={delivery.id}><strong>{delivery.channel_name}</strong><span className={`badge ${delivery.status}`}>{deliveryNames[delivery.status] || delivery.status}</span><span>已尝试 {delivery.attempts} 次</span>{delivery.error && <span className="card-error">{delivery.error}</span>}</div>)}</details>}
     </div>
-  </article>)}</div>;
+  </article>;
+  })}</div>;
 }
 
 export function AnnouncementList({ rows, dialog: Dialog }: { rows: Announcement[]; dialog: DialogComponent }) {
   const [selected, setSelected] = useState<Announcement | null>(null);
   return <>
-    {!rows.length ? <Empty>暂无上游公告。这里只显示上游已返回的公告，请检查账户采集状态。</Empty> : <div className="monitor-list">{rows.map(row => <article className="monitor-entry" key={row.id}>
-      <span className="monitor-symbol"><Megaphone size={16} /></span>
+    {!rows.length ? <Empty icon={<Megaphone size={25} aria-hidden="true" />}>暂无上游公告。这里只显示上游已返回的公告，请检查账户采集状态。</Empty> : <div className="monitor-list">{rows.map(row => <article className="monitor-entry" key={row.id}>
+      <span className="monitor-symbol"><Megaphone size={16} aria-hidden="true" /></span>
       <div className="monitor-entry-body"><button className="announcement-title" onClick={() => setSelected(row)}>{row.title}</button><p className="announcement-preview">{announcementText(row.content)}</p>
         <div className="monitor-meta"><span>{row.account_name} · {row.kind === "newapi" ? "NewAPI" : "Sub2API"}</span><span>{row.published_at ? date(row.published_at) : "发布时间未提供"}</span>{row.mode && <span className="badge">{row.mode}</span>}{row.stale && <span className="badge low">上次可用数据</span>}</div>
         <button className="text-button" onClick={() => setSelected(row)} aria-label={`查看公告 ${row.title}`}>查看全文<ChevronRight size={13} /></button>
@@ -66,9 +74,9 @@ export function AnnouncementList({ rows, dialog: Dialog }: { rows: Announcement[
 
 export function MonitoringPanels({ data, navigate, dialog }: { data: Data; navigate: (page: string) => void; dialog: DialogComponent }) {
   return <div className="monitoring-panels">
-    <section className="panel monitor-rate-panel"><div className="panel-heading"><h2>最近倍率变动</h2><div className="inline-actions"><span>共 {data.rateChanges.total} 次</span><button className="text-button" onClick={() => navigate("rate-changes")}>查看更多<ChevronRight size={14} /></button></div></div><div className="monitor-preview-scroll"><AlertList rows={data.rateChanges.items} rates /></div></section>
-    <section className="panel"><div className="panel-heading"><h2>告警动态</h2><div className="inline-actions"><span>共 {data.alerts.total} 条</span><button className="text-button" onClick={() => navigate("alerts")}>查看更多<ChevronRight size={14} /></button></div></div><div className="monitor-preview-scroll"><AlertList rows={data.alerts.items} /></div></section>
-    <section className="panel"><div className="panel-heading"><h2>上游公告</h2><div className="inline-actions"><span>共 {data.announcements.total} 条</span><button className="text-button" onClick={() => navigate("announcements")}>查看更多<ChevronRight size={14} /></button></div></div>{data.announcements.warnings.map(warning => <p className="monitor-warning" key={warning}>{warning}</p>)}<div className="monitor-preview-scroll"><AnnouncementList rows={data.announcements.items} dialog={dialog} /></div></section>
+    <section className="panel monitor-rate-panel"><div className="panel-heading"><h2 className="icon-heading"><ArrowUpDown size={18} aria-hidden="true" />最近倍率变动</h2><div className="inline-actions"><span>共 {data.rateChanges.total} 次</span><button className="text-button" onClick={() => navigate("rate-changes")}>查看更多<ChevronRight size={14} /></button></div></div><div className="monitor-preview-scroll"><AlertList rows={data.rateChanges.items} rates /></div></section>
+    <section className="panel"><div className="panel-heading"><h2 className="icon-heading"><Bell size={18} aria-hidden="true" />告警动态</h2><div className="inline-actions"><span>共 {data.alerts.total} 条</span><button className="text-button" onClick={() => navigate("alerts")}>查看更多<ChevronRight size={14} /></button></div></div><div className="monitor-preview-scroll"><AlertList rows={data.alerts.items} /></div></section>
+    <section className="panel"><div className="panel-heading"><h2 className="icon-heading"><Megaphone size={18} aria-hidden="true" />上游公告</h2><div className="inline-actions"><span>共 {data.announcements.total} 条</span><button className="text-button" onClick={() => navigate("announcements")}>查看更多<ChevronRight size={14} /></button></div></div>{data.announcements.warnings.map(warning => <p className="monitor-warning" key={warning}>{warning}</p>)}<div className="monitor-preview-scroll"><AnnouncementList rows={data.announcements.items} dialog={dialog} /></div></section>
   </div>;
 }
 
@@ -91,6 +99,7 @@ export function MonitorHistory({ mode, accounts, revision, dialog }: { mode: "al
     return () => controller.abort();
   }, [page, size, query, account, kind, mode, revision]);
   const pages = Math.max(1, Math.ceil((value?.total || 0) / size));
+  const Icon = announcements ? Megaphone : rates ? ArrowUpDown : Bell;
   return <>
     <div className="list-toolbar monitor-toolbar">
       <div className="search"><Search size={16} /><input aria-label={`搜索${title}`} placeholder={announcements ? "搜索账户、公告标题或正文" : "搜索账户、标题、分组或详情"} value={draft} onChange={event => setDraft(event.target.value)} /></div>
@@ -98,8 +107,8 @@ export function MonitorHistory({ mode, accounts, revision, dialog }: { mode: "al
       {mode === "alerts" && <select aria-label="筛选告警类型" value={kind} onChange={event => { setKind(event.target.value); setPage(1); }}><option value="">全部告警类型</option>{Object.entries(kinds).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select>}
     </div>
     {error && <p className="form-error" role="alert">{error}</p>}
-    <div className="panel"><div className="panel-heading"><h2>{title}</h2><span>共 {value?.total || 0} {rates ? "次" : "条"}</span></div>
-      {loading && !value ? <Empty>正在读取…</Empty> : announcements ? <>{(value as AnnouncementPage | null)?.warnings?.map(warning => <p className="monitor-warning" key={warning}>{warning}</p>)}<AnnouncementList rows={(value as ActivityPage<Announcement> | null)?.items || []} dialog={dialog} /></> : <AlertList rows={(value as AlertPage | null)?.items || []} rates={rates} />}
+    <div className="panel"><div className="panel-heading"><h2 className="icon-heading"><Icon size={18} aria-hidden="true" />{title}</h2><span>共 {value?.total || 0} {rates ? "次" : "条"}</span></div>
+      {loading && !value ? <Empty icon={<LoaderCircle size={25} className="spin" aria-hidden="true" />}>正在读取…</Empty> : announcements ? <>{(value as AnnouncementPage | null)?.warnings?.map(warning => <p className="monitor-warning" key={warning}>{warning}</p>)}<AnnouncementList rows={(value as ActivityPage<Announcement> | null)?.items || []} dialog={dialog} /></> : <AlertList rows={(value as AlertPage | null)?.items || []} rates={rates} />}
       <div className="request-pagination"><span>{announcements ? "显示上游最近一次成功采集返回的公告" : `保留最近 ${revision.settings.retention_days} 天记录`}{loading ? " · 正在读取…" : ""}</span>
         <label>每页 <select aria-label={`每页${title}条数`} value={size} onChange={event => { setSize(Number(event.target.value)); setPage(1); }}>{[25, 50, 100, 200].map(count => <option key={count} value={count}>{count}</option>)}</select> 条</label>
         <button className="secondary" aria-label={`上一页${title}`} disabled={loading || page <= 1} onClick={() => setPage(value => value - 1)}><ChevronLeft size={15} />上一页</button><span>第 {page} / {pages} 页</span><button className="secondary" aria-label={`下一页${title}`} disabled={loading || page >= pages} onClick={() => setPage(value => value + 1)}>下一页<ChevronRight size={15} /></button>

@@ -55,7 +55,7 @@
 ```yaml
 services:
   ledgergate:
-    image: ghcr.io/sectsnow/ledgergate:0.1.4
+    image: ghcr.io/sectsnow/ledgergate:0.1.5
     restart: unless-stopped
     ports:
       - "8081:8080"

@@ -26,6 +26,9 @@ func TestGatewayTimeoutPhases(t *testing.T) {
 			if mode == "total_budget" {
 				total = 1
 			}
+			if mode == "json_response" {
+				channelTimeout = 2
+			}
 			if err := a.DB.Model(&Setting{}).Where("id=1").Updates(map[string]any{"first_output_seconds": first, "stream_idle_seconds": idle, "request_timeout_seconds": total, "max_attempts": 1}).Error; err != nil {
 				t.Fatal(err)
 			}
@@ -76,7 +79,7 @@ func TestGatewayTimeoutPhases(t *testing.T) {
 			response := call(h, "POST", "/v1/chat/completions", jsonString(object{"model": "my-model", "stream": mode != "json_response", "messages": []any{}}), token)
 			log := latestRequestForTest(t, a)
 			_, detail := historyDetailForTest(t, h, cookie, log.ID)
-			status, message := 502, "context deadline exceeded"
+			status, message := 502, errChannelResponseTimeout.Error()
 			switch mode {
 			case "active_stream":
 				status, message = 200, ""

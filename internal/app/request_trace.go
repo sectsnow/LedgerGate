@@ -16,15 +16,27 @@ import (
 
 const requestBodyLimit = 256 << 10
 
+func boundedDiagnostic(value string) string {
+	if len(value) > 512 {
+		return strings.ToValidUTF8(value[:512], "") + "…"
+	}
+	return value
+}
+
 type requestAttempt struct {
-	ChannelID   uint      `json:"channel_id"`
-	ChannelName string    `json:"channel_name"`
-	Model       string    `json:"model"`
-	Protocol    string    `json:"protocol"`
-	StartedAt   time.Time `json:"started_at"`
-	DurationMS  int64     `json:"duration_ms"`
-	Status      int       `json:"status"`
-	Error       string    `json:"error"`
+	ChannelID         uint      `json:"channel_id"`
+	ChannelName       string    `json:"channel_name"`
+	Model             string    `json:"model"`
+	Protocol          string    `json:"protocol"`
+	StartedAt         time.Time `json:"started_at"`
+	DurationMS        int64     `json:"duration_ms"`
+	Status            int       `json:"status"`
+	Error             string    `json:"error"`
+	Reason            string    `json:"reason"`
+	UpstreamStatus    int       `json:"upstream_status"`
+	UpstreamRequestID string    `json:"upstream_request_id"`
+	FinishReason      string    `json:"finish_reason"`
+	IncompleteReason  string    `json:"incomplete_reason"`
 }
 
 type requestPayload struct {
@@ -92,7 +104,15 @@ func (a *App) traceAttempt(t *requestTrace, log RequestLog) {
 	firstByte := t.log.FirstByteMS
 	t.log = log
 	t.log.State, t.log.Status, t.log.Error, t.log.FirstByteMS = "running", 0, "", firstByte
-	t.attempts = append(t.attempts, requestAttempt{ChannelID: log.ChannelID, ChannelName: log.ChannelName, Model: log.UpstreamModel, Protocol: log.UpstreamProtocol, StartedAt: time.Now()})
+	t.attempts = append(t.attempts, requestAttempt{ChannelID: log.ChannelID, ChannelName: log.ChannelName, Model: log.UpstreamModel, Protocol: log.UpstreamProtocol, StartedAt: time.Now(), Reason: log.RoutingReason})
+	t.mu.Unlock()
+}
+
+func (t *requestTrace) waitForRoute(log *RequestLog, reason string, until time.Time) {
+	log.RoutingReason, log.RetryAt = reason, &until
+	t.mu.Lock()
+	t.log.RoutingReason, t.log.RetryAt = reason, &until
+	t.log.State, t.log.Status, t.log.Error = "running", 0, ""
 	t.mu.Unlock()
 }
 
@@ -107,6 +127,27 @@ func (t *requestTrace) endAttempt(status int, message string) {
 		return
 	}
 	last.Status, last.Error, last.DurationMS = status, message, time.Since(last.StartedAt).Milliseconds()
+}
+
+func (t *requestTrace) attemptResponse(response *http.Response) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if len(t.attempts) == 0 {
+		return
+	}
+	last := &t.attempts[len(t.attempts)-1]
+	last.UpstreamStatus, last.UpstreamRequestID = response.StatusCode, upstreamRequestID(response.Header)
+}
+
+func (t *requestTrace) attemptOutcome(result completion) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if len(t.attempts) == 0 {
+		return
+	}
+	last := &t.attempts[len(t.attempts)-1]
+	last.FinishReason, last.IncompleteReason = boundedDiagnostic(result.Finish), boundedDiagnostic(result.IncompleteReason)
+	t.log.FinishReason, t.log.IncompleteReason = last.FinishReason, last.IncompleteReason
 }
 
 func (t *requestTrace) usage(result completion) {
@@ -142,8 +183,8 @@ func (t *requestTrace) summary() RequestLog {
 	log := t.log
 	if activeRequest(log.State) {
 		log.DurationMS = time.Since(log.CreatedAt).Milliseconds()
-		if log.FirstTokenMS != nil {
-			log.GenerationMS = intPointer(max(log.DurationMS-*log.FirstTokenMS, 0))
+		if log.FirstContentMS != nil {
+			log.GenerationMS = intPointer(max(log.DurationMS-*log.FirstContentMS, 0))
 		}
 	}
 	return log

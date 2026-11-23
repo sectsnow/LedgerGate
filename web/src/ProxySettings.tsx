@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from "react";
+import { Globe, LoaderCircle, PlugZap, Save } from "lucide-react";
 import { api } from "./api";
 
 type ProxyConfig = {
@@ -49,7 +50,7 @@ export default function ProxySettings() {
     finally { setBusy(""); }
   };
   return <form className="panel settings-panel" onSubmit={event => { event.preventDefault(); void submit(false); }}>
-    <div className="panel-heading"><div><h2>网络代理</h2><p>为需要代理的上游账户和转发渠道提供统一的出站连接。</p></div></div>
+    <div className="panel-heading"><div><h2 className="icon-heading"><Globe size={18} aria-hidden="true" />网络代理</h2><p>为需要代理的上游账户和转发渠道提供统一的出站连接。</p></div></div>
     {config && <fieldset disabled={!!busy} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
       <div className="settings-fields">
         <label className="checkbox"><input type="checkbox" checked={config.enabled} onChange={event => set({enabled: event.target.checked})} />启用全局代理</label>
@@ -64,7 +65,7 @@ export default function ProxySettings() {
         <p className="field-hint">地址须能从 LedgerGate 服务器或容器访问，127.0.0.1 指服务器或容器自身。开启后，仅勾选“使用全局代理”的账户和渠道走代理；关闭后均直连。代理失败会报错，不会自动改走直连。</p>
         <div className="field"><label htmlFor={`${id}-target`}>连通性测试地址</label><input id={`${id}-target`} type="url" value={target} maxLength={2048} onChange={event => { setTarget(event.target.value); setMessage(""); }} /><small>测试使用当前填写的配置，不需要先保存，也不会调用账户接口。</small></div>
       </div>
-      <div className="form-footer"><button type="button" className="secondary" onClick={() => void submit(true)}>{busy === "test" ? "正在测试…" : "测试代理连接"}</button><button className="primary" type="submit">{busy === "save" ? "正在保存…" : "保存代理设置"}</button></div>
+      <div className="form-footer"><button type="button" className="secondary" onClick={() => void submit(true)}>{busy === "test" ? <LoaderCircle size={15} className="spin" aria-hidden="true" /> : <PlugZap size={15} aria-hidden="true" />}{busy === "test" ? "正在测试…" : "测试代理连接"}</button><button className="primary" type="submit">{busy === "save" ? <LoaderCircle size={15} className="spin" aria-hidden="true" /> : <Save size={15} aria-hidden="true" />}{busy === "save" ? "正在保存…" : "保存代理设置"}</button></div>
     </fieldset>}
     {!config && !error && <p className="settings-fields" role="status">正在读取代理设置…</p>}
     {error && <div className="settings-fields"><p className="form-error" role="alert">{error}</p>{!config && <button type="button" className="secondary" onClick={() => setReload(value => value + 1)}>重新加载</button>}</div>}

@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from "react";
-import { Download, Upload } from "lucide-react";
+import { ArrowLeftRight, Download, FileSearch, Upload } from "lucide-react";
 import { api } from "./api";
 import "./data-transfer.css";
 
@@ -70,7 +70,7 @@ export default function DataTransferPanel({ changed }: { changed: (settingsImpor
     return result as Preview;
   }
   return <section className="panel data-transfer-panel">
-    <div className="panel-heading"><div><h2>数据导入与导出</h2><p>按需迁移配置。消费、请求记录和监控历史通过完整备份恢复。</p></div></div>
+    <div className="panel-heading"><div><h2 className="icon-heading"><ArrowLeftRight size={18} aria-hidden="true" />数据导入与导出</h2><p>按需迁移配置。消费、请求记录和监控历史通过完整备份恢复。</p></div></div>
     <div className="transfer-tabs" role="group" aria-label="数据迁移方式">{([["export", "导出数据", Download], ["import", "导入数据", Upload]] as const).map(([value, title, Icon]) => <button type="button" className="secondary" key={value} aria-pressed={tab === value} disabled={busy} onClick={() => { setTab(value); setError(""); setMessage(""); }}><Icon size={15} />{title}</button>)}</div>
     {tab === "export" ? <form className="transfer-form" onSubmit={async event => {
       event.preventDefault(); setBusy(true); setError(""); setMessage("");
@@ -99,7 +99,7 @@ export default function DataTransferPanel({ changed }: { changed: (settingsImpor
       <div className="field"><label htmlFor={`${id}-import-password`}>数据包密码</label><input id={`${id}-import-password`} type="password" autoComplete="off" required minLength={12} maxLength={256} disabled={busy} value={importPassword} onChange={event => { setImportPassword(event.target.value); clearPreview(); }} /></div>
       {manifest && <><p className="transfer-hint">导出于 {new Date(manifest.exported_at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false })} · {manifest.include_credentials ? "包含访问凭据" : "不含访问凭据"}</p><fieldset className="transfer-fieldset"><legend>选择导入内容</legend><Categories rows={manifest.sections} selected={importSelected || []} disabled={busy} change={value => { setImportSelected(value); setPlan(null); }} /></fieldset></>}
       {plan && <div className="transfer-preview"><h3>导入预览</h3><div className="table-scroll"><table><thead><tr><th>类别</th><th>新增</th><th>跳过</th><th>替换</th></tr></thead><tbody>{plan.sections.filter(row => plan.selected.includes(row.id)).map(row => <tr key={row.id}><td>{row.label}</td><td>{row.created}</td><td>{row.skipped}</td><td>{row.updated}</td></tr>)}</tbody></table></div>{plan.warnings.map(warning => <p className="transfer-hint" key={warning}>{warning}</p>)}</div>}
-      <div className="transfer-import-actions"><button type="submit" className="secondary" disabled={busy || !file || importSelected !== null && importSelected.length === 0}>{busy ? "正在处理…" : manifest ? "更新导入预览" : "预览导入"}</button><button type="button" className="primary" disabled={busy || !plan?.token} onClick={async () => {
+      <div className="transfer-import-actions"><button type="submit" className="secondary" disabled={busy || !file || importSelected !== null && importSelected.length === 0}><FileSearch size={15} aria-hidden="true" />{busy ? "正在处理…" : manifest ? "更新导入预览" : "预览导入"}</button><button type="button" className="primary" disabled={busy || !plan?.token} onClick={async () => {
         setBusy(true); setError(""); setMessage("");
         try {
           const result = await readFile("import"); setPlan(null); setImportPassword("");

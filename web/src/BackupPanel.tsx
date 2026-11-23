@@ -1,4 +1,5 @@
 import { useId, useState, type ComponentType, type ReactNode } from "react";
+import { Archive, ArchiveRestore, Download, LoaderCircle, Upload } from "lucide-react";
 import "./data-transfer.css";
 
 type DialogComponent = ComponentType<{ title: string; children: ReactNode; close: () => void }>;
@@ -34,7 +35,7 @@ export default function BackupPanel({ dialog: Dialog }: { dialog: DialogComponen
     } catch (error) { setRestoreError((error as Error).message); }
     finally { setRestoring(false); setConfirming(false); }
   }
-  return <section className="panel backup-panel"><div className="panel-heading"><div><h2>备份与恢复</h2><p>下载加密备份，包含配置、用量统计、解密主密钥与管理员密码。内存中的近期请求及正文不随备份保存。</p></div></div>
+  return <section className="panel backup-panel"><div className="panel-heading"><div><h2 className="icon-heading"><Archive size={18} aria-hidden="true" />备份与恢复</h2><p>下载加密备份，包含配置、用量统计、解密主密钥与管理员密码。内存中的近期请求及正文不随备份保存。</p></div></div>
     <form className="backup-controls" onSubmit={async event => {
       event.preventDefault(); setBusy(true); setError("");
       try {
@@ -48,10 +49,10 @@ export default function BackupPanel({ dialog: Dialog }: { dialog: DialogComponen
       finally { setBusy(false); }
     }}>
       <div className="field"><label htmlFor={id}>备份密码</label><input id={id} type="password" autoComplete="new-password" required minLength={12} maxLength={256} disabled={busy || restoring} value={password} onChange={event => setPassword(event.target.value)} /><small>至少 12 字节。恢复时需要此密码，请自行保存。</small></div>
-      <button className="secondary" disabled={busy || restoring}>{busy ? "正在创建…" : "下载加密备份"}</button>
+      <button className="secondary" disabled={busy || restoring}>{busy ? <LoaderCircle size={15} className="spin" aria-hidden="true" /> : <Download size={15} aria-hidden="true" />}{busy ? "正在创建…" : "下载加密备份"}</button>
       {error && <p className="form-error" role="alert">{error}</p>}
     </form>
-    <details className="backup-help"><summary>恢复备份</summary>
+    <details className="backup-help"><summary><span className="icon-label"><ArchiveRestore size={15} aria-hidden="true" />恢复备份</span></summary>
       <form className="backup-restore" onSubmit={event => {
         event.preventDefault(); setRestoreError("");
         const bytes = new TextEncoder().encode(restorePassword).length;
@@ -64,7 +65,7 @@ export default function BackupPanel({ dialog: Dialog }: { dialog: DialogComponen
           {file && <p>{file.name} · {(file.size / 1024 / 1024).toFixed(2)} MiB</p>}
         </div>
         <div className="field"><label htmlFor={`${id}-restore-password`}>该备份的加密密码</label><input id={`${id}-restore-password`} type="password" autoComplete="off" required maxLength={256} disabled={busy || restoring} value={restorePassword} onChange={event => setRestorePassword(event.target.value)} /></div>
-        <button className="secondary" type="submit" disabled={busy || restoring || !file}>{restoring ? "正在恢复…" : "上传并恢复"}</button>
+        <button className="secondary" type="submit" disabled={busy || restoring || !file}>{restoring ? <LoaderCircle size={15} className="spin" aria-hidden="true" /> : <Upload size={15} aria-hidden="true" />}{restoring ? "正在恢复…" : "上传并恢复"}</button>
         {restoreError && <p className="form-error" role="alert">{restoreError}</p>}
       </form>
     </details>

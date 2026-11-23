@@ -1,16 +1,22 @@
 import { useEffect, useState, type ComponentType, type ReactNode } from "react";
-import { Bell, ChevronLeft, ChevronRight, History, LoaderCircle, Pencil, Plus, Power, Send, Trash2 } from "lucide-react";
+import { Bell, ChevronLeft, ChevronRight, History, LoaderCircle, Mail, MessagesSquare, Pause, Pencil, Play, Plus, Send, Trash2, Webhook } from "lucide-react";
 import { api, type AccountRow, type ActivityPage, type NotificationChannel, type NotificationDelivery } from "./api";
 import "./notifications.css";
 
 type DialogComponent = ComponentType<{ title: string; children: ReactNode; close: () => void }>;
 type FieldComponent = ComponentType<{ label: string; children: ReactNode; hint?: string }>;
 const notificationTypes: Record<string, string> = { telegram: "Telegram", webhook: "通用 Webhook", email: "Email", wecom: "企业微信", dingtalk: "钉钉", feishu: "飞书", serverchan: "Server酱" };
+const notificationIcons: Record<string, typeof Bell> = { telegram: Send, webhook: Webhook, email: Mail, wecom: MessagesSquare, dingtalk: MessagesSquare, feishu: MessagesSquare, serverchan: Bell };
 const deliveryNames: Record<string, string> = { pending: "等待发送", sent: "已送达", failed: "发送失败", cancelled: "已取消", partial: "部分送达" };
 const notificationEvents = [
   ["low_balance", "余额偏低"], ["monitor_error", "采集失败"], ["recovered", "采集恢复"], ["rates_changed", "倍率变化"], ["announcement", "公告更新"], ["monitor_warning", "部分采集失败"], ["monitor_warning_recovered", "部分采集恢复"], ["channel_auto_disabled", "渠道自动停用"], ["subscription_expiring", "订阅到期"], ["subscription_daily", "日余量偏低"], ["subscription_weekly", "周余量偏低"], ["subscription_monthly", "月余量偏低"],
 ];
 const date = (value: string) => new Date(value).toLocaleString("zh-CN", { hour12: false });
+
+function NotificationTypeLabel({ type }: { type: string }) {
+  const Icon = notificationIcons[type] || Bell;
+  return <span className="icon-label"><Icon size={14} aria-hidden="true" />{notificationTypes[type] || type}</span>;
+}
 
 export default function NotificationPanel({ accounts, defaultRetries, dialog: Dialog, field: Field }: { accounts: AccountRow[]; defaultRetries: number; dialog: DialogComponent; field: FieldComponent }) {
   const [rows, setRows] = useState<NotificationChannel[] | null>(null);
@@ -29,17 +35,17 @@ export default function NotificationPanel({ accounts, defaultRetries, dialog: Di
     finally { setBusy(""); setRevision(value => value + 1); }
   };
   return <section className="panel notification-panel">
-    <div className="panel-heading"><div><h2>通知渠道 {rows && <span className="muted">{rows.length}</span>}</h2><p>为不同账户和告警配置接收方式，各渠道独立发送与重试。</p></div><div className="inline-actions"><button className="secondary" onClick={() => setHistory(0)}><History size={15} />投递记录</button><button className="primary" disabled={!!busy || rows === null} onClick={() => setEditing("new")}><Plus size={16} />新增通知渠道</button></div></div>
+    <div className="panel-heading"><div><h2 className="icon-heading"><Bell size={18} aria-hidden="true" />通知渠道 {rows && <span className="muted">{rows.length}</span>}</h2><p>为不同账户和告警配置接收方式，各渠道独立发送与重试。</p></div><div className="inline-actions"><button className="secondary" onClick={() => setHistory(0)}><History size={15} />投递记录</button><button className="primary" disabled={!!busy || rows === null} onClick={() => setEditing("new")}><Plus size={16} />新增通知渠道</button></div></div>
     <div className="notification-panel-body">
     {error && <p className="form-error" role="alert">{error}</p>}
     {message && <p className="field-hint" role="status">{message}</p>}
     {rows === null ? <div className="empty">{error ? <button className="secondary" onClick={() => { setError(""); setRevision(value => value + 1); }}>重新加载</button> : "正在读取通知渠道…"}</div> : !rows.length ? <div className="empty notification-empty"><Bell size={26} /><p>尚未添加通知渠道</p><small>支持 Telegram、Webhook、Email、企业微信、钉钉、飞书和 Server酱。</small></div> : <div className="notification-list">{rows.map(row => <article className={`notification-card ${row.enabled ? "" : "is-paused"}`} key={row.id}>
-      <div className="notification-card-body"><div className="notification-card-title"><strong>{row.name}</strong><span className="badge">{notificationTypes[row.type]}</span><span className={`badge ${row.enabled ? "good" : ""}`}>{row.enabled ? "已启用" : "已暂停"}</span></div>
+      <div className="notification-card-body"><div className="notification-card-title"><strong>{row.name}</strong><span className="badge"><NotificationTypeLabel type={row.type} /></span><span className={`badge ${row.enabled ? "good" : ""}`}>{row.enabled ? "已启用" : "已暂停"}</span></div>
         <p className="field-hint">{row.accounts?.length ? `${row.accounts.length} 个账户` : "全部账户"} · {row.events?.length ? `${row.events.length} 类事件` : "全部事件"} · 最多尝试 {row.retries} 次{row.use_proxy && " · 使用全局代理"}</p>
         {row.last_delivery ? <p className="notification-last">最近投递：<span className={`badge ${row.last_delivery.status}`}>{deliveryNames[row.last_delivery.status]}</span><time dateTime={row.last_delivery.updated_at}>{date(row.last_delivery.updated_at)}</time>{row.last_delivery.error && <span className="card-error">{row.last_delivery.error}</span>}</p> : <p className="field-hint">尚无投递记录</p>}
       </div>
       <div className="notification-actions">
-        <button className="secondary" disabled={!!busy} aria-label={`${row.name}：${row.enabled ? "暂停" : "启用"}`} onClick={() => void act(`enabled-${row.id}`, () => api(`/notification-channels/${row.id}/enabled`, "PATCH", { enabled: !row.enabled }), row.enabled ? "渠道已暂停，待发任务将在恢复后继续" : "通知渠道已启用")}><Power size={14} />{row.enabled ? "暂停" : "启用"}</button>
+        <button className="secondary" disabled={!!busy} aria-label={`${row.name}：${row.enabled ? "暂停" : "启用"}`} onClick={() => void act(`enabled-${row.id}`, () => api(`/notification-channels/${row.id}/enabled`, "PATCH", { enabled: !row.enabled }), row.enabled ? "渠道已暂停，待发任务将在恢复后继续" : "通知渠道已启用")}>{row.enabled ? <Pause size={14} aria-hidden="true" /> : <Play size={14} aria-hidden="true" />}{row.enabled ? "暂停" : "启用"}</button>
         <button className="secondary" disabled={!!busy} aria-label={`${row.name}：测试通知`} onClick={() => void act(`test-${row.id}`, () => api(`/notification-channels/${row.id}/test`, "POST"), "测试通知已送达")}>
           {busy === `test-${row.id}` ? <LoaderCircle size={14} className="spin" /> : <Send size={14} />}测试
         </button>
@@ -100,7 +106,7 @@ function DeliveryHistory({ channelID, channels, dialog: Dialog, close }: { chann
   }, [page, selected, revision]);
   return <Dialog title="通知投递记录" close={close}><div className="notification-history"><div className="notification-history-controls"><label>通知渠道<select value={selected} onChange={event => { setSelected(Number(event.target.value)); setPage(1); setValue(null); }}><option value={0}>全部渠道（含已删除）</option>{channels.map(row => <option value={row.id} key={row.id}>{row.name}</option>)}</select></label><button className="secondary" disabled={loading} onClick={() => setRevision(value => value + 1)}>{loading ? "正在刷新…" : "刷新记录"}</button></div>
     {error && <p className="form-error" role="alert">{error}</p>}
-    {!value ? <div className="empty">{loading ? "正在读取…" : "暂无记录"}</div> : !value.items.length ? <div className="empty">暂无投递记录</div> : <div className="notification-history-list">{value.items.map(row => <article className="notification-history-entry" key={row.id}><div><strong>{row.title}</strong><span className={`badge ${row.status}`}>{deliveryNames[row.status]}</span></div><p className="field-hint">{row.channel_name} · {notificationTypes[row.channel_type]} · 已尝试 {row.attempts} 次{row.alert_id === null && " · 手动测试"}</p><time dateTime={row.updated_at}>{date(row.updated_at)}</time>{row.error && <p className="card-error">{row.error}</p>}{row.status === "pending" && <p className="field-hint">下次尝试：{date(row.next_retry_at)}，暂停期间等待恢复。</p>}</article>)}</div>}
+    {!value ? <div className="empty">{loading ? "正在读取…" : "暂无记录"}</div> : !value.items.length ? <div className="empty">暂无投递记录</div> : <div className="notification-history-list">{value.items.map(row => <article className="notification-history-entry" key={row.id}><div><strong>{row.title}</strong><span className={`badge ${row.status}`}>{deliveryNames[row.status]}</span></div><p className="field-hint">{row.channel_name} · <NotificationTypeLabel type={row.channel_type} /> · 已尝试 {row.attempts} 次{row.alert_id === null && " · 手动测试"}</p><time dateTime={row.updated_at}>{date(row.updated_at)}</time>{row.error && <p className="card-error">{row.error}</p>}{row.status === "pending" && <p className="field-hint">下次尝试：{date(row.next_retry_at)}，暂停期间等待恢复。</p>}</article>)}</div>}
     {value && <div className="notification-history-pagination"><span>共 {value.total} 条 · 第 {page} / {Math.max(1, Math.ceil(value.total / 20))} 页</span><div className="inline-actions"><button className="icon-button" aria-label="上一页" disabled={loading || page <= 1} onClick={() => setPage(page - 1)}><ChevronLeft size={18} /></button><button className="icon-button" aria-label="下一页" disabled={loading || page * 20 >= value.total} onClick={() => setPage(page + 1)}><ChevronRight size={18} /></button></div></div>}
   </div></Dialog>;
 }

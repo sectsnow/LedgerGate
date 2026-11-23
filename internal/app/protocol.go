@@ -35,6 +35,25 @@ func (channel Channel) prepareRequest(body object, incoming string) (object, str
 	return nil, "", err
 }
 
+func compatibleCandidates(items []candidate, body object, protocol string) ([]candidate, error) {
+	result := make([]candidate, 0, len(items))
+	checked := map[uint]error{}
+	var firstError error
+	for _, item := range items {
+		err, exists := checked[item.Channel.ID]
+		if !exists {
+			_, _, err = item.Channel.prepareRequest(body, protocol)
+			checked[item.Channel.ID] = err
+		}
+		if err == nil {
+			result = append(result, item)
+		} else if firstError == nil {
+			firstError = err
+		}
+	}
+	return result, firstError
+}
+
 func validProtocol(protocol string) bool {
 	return protocol == "openai" || protocol == "responses" || protocol == "anthropic"
 }
@@ -59,6 +78,14 @@ func convertRequest(body object, from, to string) (object, error) {
 	for _, field := range []string{"model", "stream", "temperature", "top_p", "tools", "tool_choice", "messages", "max_tokens", "max_completion_tokens", "stop", "parallel_tool_calls", "input", "instructions", "max_output_tokens", "system", "stop_sequences", "stream_options", "metadata", "user", "store", "n"} {
 		allowed[field] = true
 	}
+	formatPair := from != "anthropic" && to != "anthropic"
+	if formatPair {
+		if from == "openai" {
+			allowed["response_format"] = true
+		} else {
+			allowed["text"] = true
+		}
+	}
 	for field, value := range body {
 		if !allowed[field] && value != nil {
 			return nil, fmt.Errorf("跨协议转换暂不支持 %s，请使用同协议渠道", field)
@@ -68,12 +95,59 @@ func convertRequest(body object, from, to string) (object, error) {
 		return nil, errors.New("跨协议转换不支持保存上游会话，请设置 store=false")
 	}
 	for _, field := range []string{"previous_response_id", "conversation", "background", "audio", "prediction", "response_format", "reasoning", "reasoning_effort", "thinking", "logprobs", "top_logprobs", "service_tier", "seed", "logit_bias", "presence_penalty", "frequency_penalty", "text", "modalities", "function_call", "functions"} {
+		if formatPair && (field == "response_format" || field == "text") {
+			continue
+		}
 		if value, exists := body[field]; exists && value != nil && value != false {
 			return nil, fmt.Errorf("跨协议转换暂不支持 %s，请使用同协议渠道", field)
 		}
 	}
-	if n := integer(body["n"]); n > 1 {
-		return nil, errors.New("跨协议转换仅支持 n=1")
+	if value := body["n"]; value != nil {
+		if n, ok := number(value); !ok || n != 1 {
+			return nil, errors.New("跨协议转换仅支持 n=1")
+		}
+	}
+	if value := body["stream_options"]; value != nil {
+		options, ok := value.(map[string]any)
+		if from != "openai" || !ok {
+			return nil, errors.New("跨协议仅支持 Chat 的 stream_options.include_usage")
+		}
+		for name, value := range options {
+			if value == nil {
+				continue
+			}
+			if name != "include_usage" {
+				return nil, fmt.Errorf("跨协议转换暂不支持 stream_options.%s", name)
+			}
+			if _, ok := value.(bool); !ok {
+				return nil, errors.New("stream_options.include_usage 必须为布尔值")
+			}
+		}
+	}
+	if user := body["user"]; user != nil {
+		if _, ok := user.(string); !ok || from == "anthropic" {
+			return nil, errors.New("跨协议 user 须为 Chat 或 Responses 的字符串字段")
+		}
+	}
+	if value := body["metadata"]; value != nil {
+		metadata, ok := value.(map[string]any)
+		if !ok {
+			return nil, errors.New("metadata 必须是对象")
+		}
+		if from == "anthropic" {
+			for name, value := range metadata {
+				if name != "user_id" && value != nil {
+					return nil, fmt.Errorf("跨协议无法表达 Anthropic metadata.%s", name)
+				}
+			}
+			if value := metadata["user_id"]; value != nil {
+				if _, ok := value.(string); !ok {
+					return nil, errors.New("metadata.user_id 必须为字符串")
+				}
+			}
+		} else if to == "anthropic" && len(metadata) > 0 {
+			return nil, errors.New("Anthropic 无法表达通用 metadata，请使用同协议渠道")
+		}
 	}
 	chat, err := toChat(body, from)
 	if err != nil {
@@ -101,6 +175,29 @@ func toChat(body object, protocol string) (object, error) {
 	}
 	messages := []any{}
 	if protocol == "responses" {
+		for _, name := range []string{"metadata", "user"} {
+			if value, exists := body[name]; exists {
+				chat[name] = value
+			}
+		}
+		if text, exists := body["text"]; exists && text != nil {
+			options, ok := text.(map[string]any)
+			if !ok {
+				return nil, errors.New("text 必须是对象")
+			}
+			for field, value := range options {
+				if field != "format" && value != nil {
+					return nil, fmt.Errorf("跨协议转换暂不支持 text.%s", field)
+				}
+			}
+			if options["format"] != nil {
+				format, err := convertJSONFormat(options["format"], "openai")
+				if err != nil {
+					return nil, err
+				}
+				chat["response_format"] = format
+			}
+		}
 		if system := str(body["instructions"]); system != "" {
 			messages = append(messages, object{"role": "system", "content": system})
 		}
@@ -129,6 +226,9 @@ func toChat(body object, protocol string) (object, error) {
 			chat["max_tokens"] = value
 		}
 	} else {
+		if user := obj(body["metadata"])["user_id"]; user != nil {
+			chat["user"] = user
+		}
 		if system := body["system"]; system != nil {
 			content, err := contentToChat(system, "anthropic")
 			if err != nil {
@@ -203,6 +303,13 @@ func toChat(body object, protocol string) (object, error) {
 	}
 	if choice, exists := body["tool_choice"]; exists {
 		if mapped, ok := choice.(map[string]any); ok {
+			if disabled, exists := mapped["disable_parallel_tool_use"]; exists && protocol == "anthropic" {
+				value, ok := disabled.(bool)
+				if !ok {
+					return nil, errors.New("disable_parallel_tool_use 必须为布尔值")
+				}
+				chat["parallel_tool_calls"] = !value
+			}
 			switch str(mapped["type"]) {
 			case "tool", "function":
 				chat["tool_choice"] = object{"type": "function", "function": object{"name": mapped["name"]}}
@@ -322,7 +429,14 @@ func chatContent(value any, to string, assistant bool) (any, error) {
 func chatToResponses(chat object) (object, error) {
 	stream, _ := chat["stream"].(bool)
 	result := object{"model": chat["model"], "stream": stream, "store": false}
-	for _, field := range []string{"temperature", "top_p", "parallel_tool_calls"} {
+	if chat["response_format"] != nil {
+		format, err := convertJSONFormat(chat["response_format"], "responses")
+		if err != nil {
+			return nil, err
+		}
+		result["text"] = object{"format": format}
+	}
+	for _, field := range []string{"temperature", "top_p", "parallel_tool_calls", "metadata", "user"} {
 		if value, ok := chat[field]; ok {
 			result[field] = value
 		}
@@ -409,6 +523,9 @@ func chatToAnthropic(chat object) (object, error) {
 	}
 	stream, _ := chat["stream"].(bool)
 	result := object{"model": chat["model"], "stream": stream, "max_tokens": maxTokens}
+	if user := chat["user"]; user != nil {
+		result["metadata"] = object{"user_id": user}
+	}
 	for _, field := range []string{"temperature", "top_p"} {
 		if value, ok := chat[field]; ok {
 			result[field] = value
@@ -489,7 +606,57 @@ func chatToAnthropic(chat object) (object, error) {
 			}
 		}
 	}
+	if parallel, exists := chat["parallel_tool_calls"]; exists && parallel != nil {
+		value, ok := parallel.(bool)
+		if !ok {
+			return nil, errors.New("parallel_tool_calls 必须为布尔值")
+		}
+		choice := obj(result["tool_choice"])
+		if len(choice) == 0 {
+			choice = object{"type": "auto"}
+		}
+		choice["disable_parallel_tool_use"] = !value
+		result["tool_choice"] = choice
+	}
 	return result, nil
+}
+
+func convertJSONFormat(value any, to string) (object, error) {
+	format, ok := value.(map[string]any)
+	if !ok {
+		return nil, errors.New("JSON 输出格式必须是对象")
+	}
+	switch str(format["type"]) {
+	case "text", "json_object":
+		return format, nil
+	case "json_schema":
+		if to == "openai" {
+			schema := object{}
+			for name, value := range format {
+				if name != "type" {
+					schema[name] = value
+				}
+			}
+			return object{"type": "json_schema", "json_schema": schema}, nil
+		}
+		for field, value := range format {
+			if field != "type" && field != "json_schema" && value != nil {
+				return nil, fmt.Errorf("跨协议转换暂不支持 response_format.%s", field)
+			}
+		}
+		schema, ok := format["json_schema"].(map[string]any)
+		if !ok {
+			return nil, errors.New("json_schema 必须是对象")
+		}
+		result := object{}
+		for name, value := range schema {
+			result[name] = value
+		}
+		result["type"] = "json_schema"
+		return result, nil
+	default:
+		return nil, errors.New("跨协议暂仅支持 text、json_object 和 json_schema 输出格式")
+	}
 }
 
 type responseProcessingError string
@@ -503,16 +670,17 @@ type toolCall struct {
 }
 type completion struct {
 	usageDetails
-	ID           string
-	Text         string
-	Tools        []toolCall
-	Input        int64
-	Output       int64
-	CacheRead    int64
-	CacheWrite   int64
-	CacheWrite1h int64
-	UsageSeen    bool
-	Finish       string
+	ID               string
+	Text             string
+	Tools            []toolCall
+	Input            int64
+	Output           int64
+	CacheRead        int64
+	CacheWrite       int64
+	CacheWrite1h     int64
+	UsageSeen        bool
+	Finish           string
+	IncompleteReason string
 }
 
 func validateCompletion(body object, protocol string) error {
@@ -545,11 +713,12 @@ func usageOf(value object, protocol string) (int64, int64) {
 }
 
 func parseCompletion(body object, protocol string) (completion, error) {
-	result := completion{ID: str(body["id"]), Finish: "stop"}
+	result := completion{ID: str(body["id"])}
 	if err := validateCompletion(body, protocol); err != nil {
 		return result, err
 	}
 	result.applyUsage(body, protocol)
+	result.captureEnd(body, protocol)
 	if body["error"] != nil {
 		return result, errors.New("上游返回错误响应")
 	}
@@ -560,7 +729,7 @@ func parseCompletion(body object, protocol string) (completion, error) {
 		}
 		choice := obj(choices[0])
 		message := obj(choice["message"])
-		result.Text, result.Finish = str(message["content"]), str(choice["finish_reason"])
+		result.Text = str(message["content"])
 		if blocks, ok := message["content"].([]any); ok {
 			for _, raw := range blocks {
 				block := obj(raw)
@@ -593,12 +762,6 @@ func parseCompletion(body object, protocol string) (completion, error) {
 				return result, responseProcessingError("上游返回的内容类型暂不支持跨协议转换")
 			}
 		}
-		switch str(body["stop_reason"]) {
-		case "tool_use":
-			result.Finish = "tool_calls"
-		case "max_tokens":
-			result.Finish = "length"
-		}
 	} else {
 		if status := str(body["status"]); status == "failed" || status == "cancelled" {
 			return result, errors.New("上游 Responses 请求失败或已取消")
@@ -626,16 +789,14 @@ func parseCompletion(body object, protocol string) (completion, error) {
 				return result, responseProcessingError("Responses 输出项暂不支持转换")
 			}
 		}
-		if str(body["status"]) == "incomplete" {
-			result.Finish = "length"
-		} else if len(result.Tools) > 0 {
-			result.Finish = "tool_calls"
-		}
 	}
 	return result, nil
 }
 
 func completionBody(result completion, protocol, model string) (object, error) {
+	if result.Finish == "incomplete" && protocol != "responses" {
+		return nil, responseProcessingError("上游未完成原因无法转换到目标协议，请使用同协议渠道")
+	}
 	if result.ID == "" {
 		result.ID = "lg_" + randomToken()[:16]
 	}
@@ -675,6 +836,9 @@ func completionBody(result completion, protocol, model string) (object, error) {
 		if result.Finish == "length" {
 			stop = "max_tokens"
 		}
+		if result.Finish == "content_filter" {
+			stop = "refusal"
+		}
 		return object{"id": result.ID, "type": "message", "role": "assistant", "model": model, "content": content, "stop_reason": stop, "stop_sequence": nil, "usage": result.usageBody(protocol)}, nil
 	}
 	output := []any{}
@@ -686,9 +850,18 @@ func completionBody(result completion, protocol, model string) (object, error) {
 	}
 	status := "completed"
 	var incomplete any
-	if result.Finish == "length" {
+	if result.Finish == "length" || result.Finish == "content_filter" || result.Finish == "incomplete" {
 		status = "incomplete"
-		incomplete = object{"reason": "max_output_tokens"}
+		reason := result.IncompleteReason
+		if reason == "" && result.Finish == "length" {
+			reason = "max_output_tokens"
+		}
+		if reason == "" && result.Finish == "content_filter" {
+			reason = "content_filter"
+		}
+		if reason != "" {
+			incomplete = object{"reason": reason}
+		}
 	}
 	return object{"id": result.ID, "object": "response", "created_at": time.Now().Unix(), "model": model, "status": status, "error": nil, "incomplete_details": incomplete, "output": output, "usage": result.usageBody(protocol)}, nil
 }

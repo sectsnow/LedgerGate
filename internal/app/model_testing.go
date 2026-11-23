@@ -29,18 +29,19 @@ type modelTestInput struct {
 }
 
 type modelTestResult struct {
-	Success      bool   `json:"success"`
-	Status       int    `json:"status"`
-	DurationMS   int64  `json:"duration_ms"`
-	FirstTokenMS *int64 `json:"first_token_ms"`
-	GenerationMS *int64 `json:"generation_ms"`
-	InputTokens  *int64 `json:"input_tokens"`
-	OutputTokens *int64 `json:"output_tokens"`
-	CacheRead    *int64 `json:"cache_read_tokens"`
-	CacheWrite   *int64 `json:"cache_write_tokens"`
-	UsageWarning string `json:"usage_warning"`
-	Text         string `json:"text"`
-	Error        string `json:"error"`
+	Success        bool   `json:"success"`
+	Status         int    `json:"status"`
+	DurationMS     int64  `json:"duration_ms"`
+	FirstTokenMS   *int64 `json:"first_token_ms"`
+	FirstContentMS *int64 `json:"first_content_ms"`
+	GenerationMS   *int64 `json:"generation_ms"`
+	InputTokens    *int64 `json:"input_tokens"`
+	OutputTokens   *int64 `json:"output_tokens"`
+	CacheRead      *int64 `json:"cache_read_tokens"`
+	CacheWrite     *int64 `json:"cache_write_tokens"`
+	UsageWarning   string `json:"usage_warning"`
+	Text           string `json:"text"`
+	Error          string `json:"error"`
 }
 
 type modelTestModels struct {
@@ -212,7 +213,10 @@ func (a *App) testChannelModel(c *gin.Context) {
 		result.DurationMS = time.Since(started).Milliseconds()
 		if !timing.First.IsZero() {
 			result.FirstTokenMS = intPointer(timing.First.Sub(started).Milliseconds())
-			result.GenerationMS = intPointer(max(result.DurationMS-*result.FirstTokenMS, 0))
+		}
+		if !timing.FirstContent.IsZero() {
+			result.FirstContentMS = intPointer(timing.FirstContent.Sub(started).Milliseconds())
+			result.GenerationMS = intPointer(max(result.DurationMS-*result.FirstContentMS, 0))
 		}
 		if usage.UsageSeen && usage.UsageWarning == "" {
 			result.InputTokens, result.OutputTokens = intPointer(usage.Input), intPointer(usage.Output)
@@ -260,6 +264,7 @@ func (a *App) testChannelModel(c *gin.Context) {
 		scanner.Buffer(make([]byte, 4096), 1<<20)
 		for {
 			event, readErr := readEvent(scanner)
+			received := time.Now()
 			if readErr != nil {
 				result.Error = "上游流未正常结束、读取失败或响应过大"
 				return
@@ -272,7 +277,7 @@ func (a *App) testChannelModel(c *gin.Context) {
 				}
 				return
 			}
-			timing.observe(event, input.Protocol)
+			timing.observe(event, input.Protocol, received)
 			if value, decodeErr := decodeJSON([]byte(event.Data)); decodeErr == nil {
 				text := modelTestText(obj(value), input.Protocol, true)
 				if len(result.Text) < 16384 {
@@ -283,7 +288,7 @@ func (a *App) testChannelModel(c *gin.Context) {
 				break
 			}
 		}
-		if timing.First.IsZero() && result.Text == "" {
+		if timing.FirstContent.IsZero() && result.Text == "" {
 			result.Error = "上游未返回文本；请检查模型类型或提高输出上限后重试"
 			return
 		}

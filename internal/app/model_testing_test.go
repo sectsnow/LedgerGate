@@ -97,7 +97,7 @@ func TestModelTestingProtocolsAndKeys(t *testing.T) {
 				if !result.Success || result.Text != "OK" || result.Status != 200 || result.InputTokens == nil || *result.InputTokens != 10 || result.OutputTokens == nil || *result.OutputTokens != 5 {
 					t.Fatalf("wrong test result %+v", result)
 				}
-				if stream != (result.FirstTokenMS != nil) {
+				if stream != (result.FirstTokenMS != nil) || stream != (result.FirstContentMS != nil) {
 					t.Fatal("first token timing must only exist for streaming output")
 				}
 				if protocol == "openai" && stream && (*result.FirstTokenMS < 5 || result.CacheRead == nil || *result.CacheRead != 2) {

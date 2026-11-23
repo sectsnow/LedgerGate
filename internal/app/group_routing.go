@@ -176,7 +176,7 @@ func (a *App) recordMemberFailure(group Group, item candidate, channelFailure bo
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	health := channelState{Until: until, Error: message}
+	health := channelState{Until: until, Error: message, Status: status}
 	if channelFailure {
 		health.Probing = a.health[item.Channel.ID].Probing
 		a.health[item.Channel.ID] = health

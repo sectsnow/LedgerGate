@@ -175,6 +175,45 @@ func TestRequestHistoryPaginationFiltersAndEviction(t *testing.T) {
 	}
 }
 
+func TestRequestHistoryListsAllCachedRequestsWithoutPaging(t *testing.T) {
+	a := testApp(t)
+	h := a.Router()
+	cookie := loginForTest(t, h)
+	a.mu.Lock()
+	for id := uint(1); id <= 50; id++ {
+		a.cacheFinishedRequest(RequestLog{ID: id, RequestID: fmt.Sprintf("finished-%d", id), Model: "shared-model", State: "completed", Status: 200}, requestPayload{})
+	}
+	a.mu.Unlock()
+	for i := range 51 {
+		log := RequestLog{RequestID: fmt.Sprintf("active-%d", i), Model: "shared-model"}
+		a.beginRequestTrace(&log)
+	}
+	response := call(h, "GET", "/api/requests", "", cookie)
+	var all []RequestLog
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &all) != nil || len(all) != 101 {
+		t.Fatal("unpaged request list omitted cached records", response.Body.String())
+	}
+	for _, test := range []struct {
+		query string
+		want  int
+	}{
+		{"q=&state=", 101},
+		{"q=SHARED-MODEL&state=", 101},
+		{"q=&state=running", 51},
+		{"q=&state=completed", 50},
+	} {
+		response := call(h, "GET", "/api/requests?"+test.query, "", cookie)
+		var result struct {
+			Items  []RequestLog `json:"items"`
+			Total  int          `json:"total"`
+			Active int          `json:"active"`
+		}
+		if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &result) != nil || len(result.Items) != test.want || result.Total != test.want || result.Active != 51 {
+			t.Fatalf("request list truncated or filters changed: %s: %s", test.query, response.Body.String())
+		}
+	}
+}
+
 func TestRequestHistoryCancellationAndAttempts(t *testing.T) {
 	a := testApp(t)
 	h := a.Router()

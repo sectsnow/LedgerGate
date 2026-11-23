@@ -3,35 +3,52 @@ import { createRoot } from "react-dom/client";
 import { version } from "../package.json";
 import {
   Activity,
-  ArrowDownLeft,
   ArrowLeft,
   ArrowUpRight,
+  ArrowUpDown,
   Bell,
+  BellRing,
   Check,
   ChevronDown,
   ChevronRight,
   CircleHelp,
+  CircleAlert,
+  CircleCheck,
+  CirclePause,
+  CircleX,
+  Clock3,
+  Coins,
   Copy,
   Database,
   ExternalLink,
+  FileText,
+  FlaskConical,
   GripVertical,
+  Hash,
+  History,
+  Inbox,
   KeyRound,
   LayoutDashboard,
   LoaderCircle,
   LogOut,
+  Megaphone,
   Network,
   Pause,
   Pencil,
   Play,
   Plus,
   RefreshCw,
+  Receipt,
   Search,
+  SearchX,
   Server,
   Settings2,
   ShieldCheck,
-  SlidersHorizontal,
   Trash2,
+  Timer,
+  Unplug,
   Wallet,
+  Workflow,
   X,
 } from "lucide-react";
 import {
@@ -71,6 +88,7 @@ import ChannelModelSync from "./ChannelModelSync";
 import ChannelModelEditor, { channelModelNames } from "./ChannelModelEditor";
 import { channelModelChanges } from "./channelModels";
 import useRouteOrder from "./useRouteOrder";
+import { GroupRoutingSummary, RouteRoutingStatus, RoutingStrategyIcon, useGroupRouting } from "./RoutingStatus";
 import { AnnouncementList, MonitorHistory, MonitoringPanels } from "./MonitorActivity";
 import ThemePicker from "./ThemePicker";
 import RequestQuality from "./RequestQuality";
@@ -80,6 +98,7 @@ import NotificationPanel from "./NotificationPanel";
 import KeyModelPicker from "./KeyModelPicker";
 import DataTransferPanel from "./DataTransferPanel";
 import AdminPasswordPanel, { adminPasswordError } from "./AdminPasswordPanel";
+import BuildInfoPanel, { buildDescription } from "./BuildInfoPanel";
 import { applyTheme, readTheme, type DataTone } from "./themes";
 import "./style.css";
 import "./themes.css";
@@ -88,13 +107,13 @@ const pages = [
   { id: "overview", name: "运行概览", icon: LayoutDashboard },
   { id: "accounts", name: "上游账户", icon: Server },
   { id: "channels", name: "转发渠道", icon: Network },
-  { id: "models", name: "模型路由", icon: SlidersHorizontal },
-  { id: "model-tests", name: "模型测试", icon: Play },
+  { id: "models", name: "模型路由", icon: Workflow },
+  { id: "model-tests", name: "模型测试", icon: FlaskConical },
   { id: "keys", name: "网关密钥", icon: KeyRound },
   { id: "requests", name: "请求记录", icon: Activity },
   { id: "alerts", name: "告警中心", icon: Bell },
-  { id: "rate-changes", name: "倍率变动", icon: ArrowUpRight },
-  { id: "announcements", name: "上游公告", icon: Bell },
+  { id: "rate-changes", name: "倍率变动", icon: ArrowUpDown },
+  { id: "announcements", name: "上游公告", icon: Megaphone },
   { id: "settings", name: "系统设置", icon: Settings2 },
 ];
 const strategyNames: Record<string, string> = {
@@ -123,6 +142,10 @@ const statusNames: Record<string, string> = {
   sent: "已送达",
   local: "本地记录",
   failed: "发送失败",
+};
+const statusIcons: Record<string, typeof CircleCheck> = {
+  ok: CircleCheck, low: Wallet, error: CircleAlert, pending: Clock3,
+  paused: CirclePause, sent: CircleCheck, local: FileText, failed: CircleX,
 };
 const compact = (value: number) =>
   new Intl.NumberFormat("zh-CN", {
@@ -178,9 +201,10 @@ function Badge({
   status: string;
   children?: React.ReactNode;
 }) {
+  const Icon = statusIcons[status] || CircleHelp;
   return (
     <span className={`badge ${status}`}>
-      <i />
+      <Icon size={12} aria-hidden="true" />
       {children || statusNames[status] || status}
     </span>
   );
@@ -189,15 +213,17 @@ function Empty({
   title,
   detail,
   action,
+  icon = <Inbox size={25} aria-hidden="true" />,
 }: {
   title: string;
   detail?: string;
   action?: React.ReactNode;
+  icon?: React.ReactNode;
 }) {
   return (
     <div className="empty">
       <div className="empty-symbol">
-        <Network size={25} />
+        {icon}
       </div>
       <h3>{title}</h3>
       {detail && <p>{detail}</p>}
@@ -471,6 +497,7 @@ function App() {
       announcements,
       settings,
       overview,
+      build,
     ] = await Promise.all([
       api<Data["accounts"]>("/accounts"),
       api<Data["channels"]>("/channels"),
@@ -482,6 +509,7 @@ function App() {
       api<Data["announcements"]>("/announcements?page=1&page_size=10"),
       api<Data["settings"]>("/settings"),
       api<Data["overview"]>("/overview"),
+      api<Data["build"]>("/version").catch(() => null),
     ]);
     if (order < refreshOrder.current.applied) return;
     refreshOrder.current.applied = order;
@@ -496,6 +524,7 @@ function App() {
       announcements,
       settings,
       overview,
+      build,
     });
   }, []);
   useEffect(() => {
@@ -627,7 +656,7 @@ function App() {
                 aria-current={current.id === p.id ? "page" : undefined}
                 className={current.id === p.id ? "active" : ""}
               >
-                <p.icon size={19} />
+                <p.icon size={19} aria-hidden="true" />
                 <span>{p.name}</span>
                 {p.id === "accounts" && badAccounts > 0 && (
                   <em>{badAccounts}</em>
@@ -639,7 +668,7 @@ function App() {
         <div className="sidebar-bottom">
           <div className="connection">
             <i />
-            本地控制台<span title={`LedgerGate v${version}`}>v{version}</span>
+            本地控制台<span title={`前端 v${version}\n${buildDescription(data?.build)}`}>{data?.build ? `后端 v${data.build.version}${data.build.modified ? "*" : ""}` : "后端未确认"}</span>
           </div>
           <button
             onClick={() =>
@@ -794,7 +823,7 @@ function App() {
           )}
           {!data ? (
             <div className="panel">
-              <Empty title="正在读取工作空间" />
+              <Empty title="正在读取工作空间" icon={<LoaderCircle size={25} className="spin" aria-hidden="true" />} />
             </div>
           ) : (
             <>
@@ -844,6 +873,7 @@ function App() {
                   <div className="panel">
                     <Empty
                       title="账户不存在"
+                      icon={<SearchX size={25} aria-hidden="true" />}
                       detail="请返回账户列表选择可用账户。"
                     />
                   </div>
@@ -875,7 +905,7 @@ function App() {
                 <MonitorHistory key={current.id} mode={current.id as "alerts" | "rate-changes" | "announcements"} accounts={data.accounts} revision={data} dialog={Dialog} />
               )}
               {current.id === "settings" && (
-                <><ThemePicker value={theme} change={setTheme} /><AdminPasswordPanel /><ProxySettings key={settingsRevision} /><NotificationPanel key={`notifications-${settingsRevision}`} accounts={data.accounts} defaultRetries={data.settings.runtime.notification_retries} dialog={Dialog} field={Field} /><SettingsForm key={settingsRevision} settings={data.settings} run={run} /><DataTransferPanel changed={async settingsImported => { await refresh(); if (settingsImported) setSettingsRevision(value => value + 1); }} /><BackupPanel dialog={Dialog} /></>
+                <><BuildInfoPanel build={data.build} frontend={version} /><ThemePicker value={theme} change={setTheme} /><AdminPasswordPanel /><ProxySettings key={settingsRevision} /><NotificationPanel key={`notifications-${settingsRevision}`} accounts={data.accounts} defaultRetries={data.settings.runtime.notification_retries} dialog={Dialog} field={Field} /><SettingsForm key={settingsRevision} settings={data.settings} run={run} /><DataTransferPanel changed={async settingsImported => { await refresh(); if (settingsImported) setSettingsRevision(value => value + 1); }} /><BackupPanel dialog={Dialog} /></>
               )}
             </>
           )}
@@ -1115,7 +1145,7 @@ function BalanceOverview({
   return (
     <section className="panel balance-overview" data-tone="balance">
       <div className="panel-heading">
-        <h2>余额概览</h2>
+        <h2 className="icon-heading"><Wallet size={18} aria-hidden="true" />余额概览</h2>
         <div className="balance-heading-controls">
           <div
             className="balance-period"
@@ -1341,14 +1371,14 @@ function AccountFinance({ data }: { data: Data }) {
           label="今日总消费"
           tone="cost"
           value={financialAmount(summary?.today_used ?? null, unit)}
-          icon={<ArrowDownLeft size={18} />}
+          icon={<Receipt size={18} aria-hidden="true" />}
           note={coverage(summary?.today_accounts || 0, "按上游实际扣费统计")}
         />
         <Stat
           label="累计消费"
           tone="cost"
           value={financialAmount(summary?.used ?? null, unit)}
-          icon={<ArrowUpRight size={18} />}
+          icon={<Coins size={18} aria-hidden="true" />}
           note={coverage(summary?.used_accounts || 0, "各账户累计实际扣费")}
         />
       </div>
@@ -1388,7 +1418,7 @@ function RequestActivity({
     <section className="panel request-activity">
       <div className="panel-heading">
         <div>
-          <h2>请求活跃度</h2>
+          <h2 className="icon-heading"><Activity size={18} aria-hidden="true" />请求活跃度</h2>
           <p>近一年 · 每格代表一天</p>
         </div>
         <span>
@@ -1535,7 +1565,7 @@ function Overview({
         retentionDays={data.settings.request_summary_retention_days}
       />
       <div className="section-heading request-period-heading">
-        <h2>网关用量</h2>
+        <h2 className="icon-heading"><Hash size={18} aria-hidden="true" />网关用量</h2>
         <div className="balance-period" role="group" aria-label="网关用量统计时段">
           {(["today", 1, 7, 14, 30] as const).map((value) => (
             <button key={value} aria-pressed={period === value} onClick={() => { setPeriod(value); setCustomOpen(false); setRangeError(""); }}>
@@ -1597,14 +1627,14 @@ function Overview({
           label={`${periodLabel} Token`}
           tone="usage"
           value={compact(totals.input_tokens + totals.output_tokens)}
-          icon={<ArrowUpRight size={18} />}
+          icon={<Hash size={18} aria-hidden="true" />}
           note={`输入 ${compact(totals.input_tokens)} · 输出 ${compact(totals.output_tokens)}`}
         />
         <Stat
           label={`${periodLabel}费用估算`}
           tone="cost"
           value={`$${money(totals.cost_micros / 1e6)}`}
-          icon={<ArrowDownLeft size={18} />}
+          icon={<Coins size={18} aria-hidden="true" />}
           note={
             [totals.cost_unknown_requests
               ? `${totals.cost_unknown_requests} 次请求待核算，未计入费用`
@@ -1617,7 +1647,7 @@ function Overview({
         <section className="panel traffic" data-tone="traffic">
           <div className="panel-heading">
             <div>
-              <h2>请求趋势</h2>
+              <h2 className="icon-heading"><Activity size={18} aria-hidden="true" />请求趋势</h2>
               <p>{typeof period === "object"
                 ? `${period.start} 至 ${period.end} · 按北京时间自然日（含首尾日期）`
                 : period === "today" ? "今天 · 北京时间零点至当前 · 按小时汇总"
@@ -1700,7 +1730,7 @@ function Overview({
       </div>
       <RequestQuality range={typeof period === "object" ? `start=${period.start}&end=${period.end}` : period === 1 ? "" : `start=${days[0]?.date || lastDate}&end=${lastDate}`} refreshed={overview} />
       <div className="section-heading">
-        <h2>账户概况</h2>
+        <h2 className="icon-heading"><Server size={18} aria-hidden="true" />账户概况</h2>
         <button className="text-button" onClick={() => navigate("accounts")}>
           查看全部
           <ChevronRight size={15} />
@@ -1710,6 +1740,7 @@ function Overview({
         <div className="panel">
           <Empty
             title="连接你的第一个上游"
+            icon={<Unplug size={25} aria-hidden="true" />}
             detail="接入 NewAPI 或 Sub2API，集中查看账户余额、订阅与告警。"
             action={
               <div className="inline-actions">
@@ -1748,7 +1779,7 @@ function Overview({
       <div className="recent-requests-panel">
         <section className="panel">
           <div className="panel-heading">
-            <h2>最近请求</h2>
+            <h2 className="icon-heading"><FileText size={18} aria-hidden="true" />最近请求</h2>
             <button
               className="text-button"
               onClick={() => navigate("requests")}
@@ -2083,6 +2114,7 @@ function Accounts({
         <div className="panel">
           <Empty
             title={search ? "没有匹配的账户" : "尚未接入上游账户"}
+            icon={search ? <SearchX size={25} aria-hidden="true" /> : <Server size={25} aria-hidden="true" />}
             detail="支持 NewAPI 和 Sub2API，可使用账户令牌或账号密码采集。"
           />
         </div>
@@ -2472,7 +2504,7 @@ function AccountDetail({
               ))}
             </tbody>
           </table>
-          {history.length === 0 && <Empty title="暂无采集记录" />}
+          {history.length === 0 && <Empty title="暂无采集记录" icon={<History size={25} aria-hidden="true" />} />}
         </div>
       ) : tab === "rates" ? (
         <div className="table-scroll detail-history">
@@ -2500,6 +2532,7 @@ function AccountDetail({
           ) : (
             <Empty
               title="暂无倍率数据"
+              icon={<ArrowUpDown size={25} aria-hidden="true" />}
               detail="采集账户后可查看上游分组倍率。"
             />
           )}
@@ -2709,6 +2742,7 @@ function Channels({
         <div className="panel">
           <Empty
             title={query ? "没有匹配的渠道" : "尚未添加转发渠道"}
+            icon={query ? <SearchX size={25} aria-hidden="true" /> : <Unplug size={25} aria-hidden="true" />}
             detail={
               query
                 ? "试试其他名称、模型或协议。"
@@ -2791,6 +2825,7 @@ function Channels({
               ) : (
                 <Empty
                   title="该账户还没有渠道"
+                  icon={<Unplug size={25} aria-hidden="true" />}
                   detail="点击添加渠道，账户归属与站点地址会自动填入。"
                 />
               )}
@@ -3442,6 +3477,7 @@ function Models({
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteResult, setDeleteResult] = useState<{ removed: number; failed: { id: number; name: string; error: string }[]; refreshError: string } | null>(null);
   const order = useRouteOrder(refresh);
+  const routing = useGroupRouting();
   const mutating = switching !== null || removing !== null || order.savingGroup !== null || deleteBusy;
   const actionsBusy = mutating || order.draggingGroup != null || deleting !== null;
   const [search, setSearch] = useState("");
@@ -3497,6 +3533,7 @@ function Models({
         <div className="panel">
           <Empty
             title="为客户端配置一个统一模型"
+            icon={<Workflow size={25} aria-hidden="true" />}
             detail="将统一模型名映射到上游模型，默认手动选择当前使用的路由。"
           />
         </div>
@@ -3509,6 +3546,7 @@ function Models({
         <div className="search"><Search size={16} /><input aria-label="搜索模型" placeholder="搜索模型或上游模型名称" value={search} onChange={event => setSearch(event.target.value)} /></div>
         <span>{filtered.length} / {data.groups.length} 个模型</span>
       </div>
+      {routing.error && <p className="form-error" role="alert">运行状态刷新失败，以下可能为上次结果：{routing.error}</p>}
       <div className="vendor-filters" aria-label="模型厂商分类">
         {["", ...vendors].map(name => (
           <button key={name || "all"} className={vendor === name ? "selected" : ""} aria-pressed={vendor === name} onClick={() => setVendor(name)}>
@@ -3535,11 +3573,12 @@ function Models({
             <div className="model-title">
               <ChannelSelection label={`选择模型 ${group.name}`} selected={selected.has(group.id) ? 1 : 0} total={1} disabled={actionsBusy} toggle={checked => toggleSelection([group.id], checked)} />
               <div className="model-icon">
-                <Network size={20} />
+                <RoutingStrategyIcon strategy={group.strategy} size={20} />
               </div>
               <div>
                 <h2>{group.name}</h2>
                 <p>{strategyNames[group.strategy]} · {group.routes.length} 条路由</p>
+                <GroupRoutingSummary group={group} runtime={routing.states[group.id]} channels={data.channels} />
                 {!usable && <span className="model-paused-state">已暂停 · 暂无可用路由</span>}
                 <ModelPrice group={group} brief />
                 <details className="model-details">
@@ -3642,6 +3681,7 @@ function Models({
                       </td>
                       <td>
                         {ch ? channelLabel(ch, data.accounts) : "渠道不存在"}
+                        <RouteRoutingStatus runtime={routing.states[group.id]?.routes.find(row => row.route_id === route.id)} />
                         {channel?.monitoring_paused && <small className="table-sub channel-monitoring-paused">账户监控已停止，此路由暂停。</small>}
                         {ch && !ch.enabled && <small className="table-sub">{ch.auto_disabled_reason ? `自动停用：${ch.auto_disabled_reason}` : "已停用，不参与转发"}</small>}
                       </td>
@@ -3734,7 +3774,7 @@ function Models({
           </div>
         </section>
       ))}
-      {filtered.length === 0 && <div className="panel"><Empty title="没有匹配的模型" detail="调整厂商分类或搜索名称后重试。" /></div>}
+      {filtered.length === 0 && <div className="panel"><Empty icon={<SearchX size={25} aria-hidden="true" />} title="没有匹配的模型" detail="调整厂商分类或搜索名称后重试。" /></div>}
       {deleting && <Dialog title={deleting.all ? "清空全部模型" : "删除模型"} close={() => { if (!deleteBusy) setDeleting(null); }}>
         <p className="delete-description">确认删除以下 {deleting.groups.length} 个模型及其路由配置？删除后，这些模型将无法通过网关调用。</p>
         {deleting.all && <p className="form-error">清空范围包含全部模型，不受当前搜索或厂商筛选限制。</p>}
@@ -4068,7 +4108,7 @@ function Keys({
     <>
       <div className="panel key-create">
         <div>
-          <h2>创建网关密钥</h2>
+          <h2 className="icon-heading"><KeyRound size={18} aria-hidden="true" />创建网关密钥</h2>
           <p>客户端使用网关密钥调用已配置的统一模型。</p>
         </div>
         <form
@@ -4101,14 +4141,14 @@ function Keys({
       </div>
       <div className="panel gateway-key-panel">
         <div className="panel-heading">
-          <h2>访问凭据</h2>
+          <h2 className="icon-heading"><ShieldCheck size={18} aria-hidden="true" />访问凭据</h2>
           <div className="inline-actions gateway-key-endpoint">
             <code>{location.origin}/v1</code>
             <CopyButton text={`${location.origin}/v1`} label="复制地址" />
           </div>
         </div>
         {!data.keys.length ? (
-          <Empty title="尚未创建网关密钥" />
+          <Empty title="尚未创建网关密钥" icon={<KeyRound size={25} aria-hidden="true" />} />
         ) : (
           <div className="table-scroll">
             <table>
@@ -4258,21 +4298,21 @@ function SettingsForm({
     >
       <div className="panel-heading">
         <div>
-          <h2>告警阈值与运行设置</h2>
+          <h2 className="icon-heading"><Settings2 size={18} aria-hidden="true" />告警阈值与运行设置</h2>
           <p>调整告警门槛、任务周期与历史保留时间。</p>
         </div>
       </div>
       <div className="settings-fields">
-        <details className="runtime-options"><summary>告警阈值与重试默认值</summary>
+        <details className="runtime-options"><summary><BellRing size={15} aria-hidden="true" />告警阈值与重试默认值</summary>
           <div className="form-grid">{([
             ["rate_change_percent", "倍率变动通知门槛（%）", 0, 10000], ["subscription_low_percent", "订阅剩余比例阈值（%）", 1, 100], ["subscription_expiry_hours", "订阅临近到期（小时）", 1, 8760], ["notification_retries", "新通知渠道默认尝试次数", 1, 30],
           ] as const).map(([key, label, min, max]) => <Field label={label} key={key}><input required type="number" min={min} max={max} step={key === "rate_change_percent" ? "any" : "1"} value={form.runtime[key]} onChange={event => setRuntime(key, Number(event.target.value))} /></Field>)}</div>
           <p className="field-hint">倍率门槛仅影响推送，真实变化仍记入本地历史；分组新增和移除始终符合倍率通知门槛。</p>
         </details>
-        <details className="runtime-options"><summary>转发超时与采集并发</summary><div className="form-grid">{([
+        <details className="runtime-options"><summary><Timer size={15} aria-hidden="true" />转发超时与采集并发</summary><div className="form-grid">{([
           ["first_output_seconds", "等待首个有效输出（秒）", 1, 3600], ["stream_idle_seconds", "流无数据超时（秒）", 1, 3600], ["request_timeout_seconds", "整次请求总时间上限（秒）", 1, 10800], ["max_attempts", "整次请求最多尝试次数", 1, 32], ["monitor_concurrency", "账户采集并发数", 1, 8],
         ] as const).map(([key, label, min, max]) => <Field label={label} key={key}><input required type="number" min={min} max={max} value={form.runtime[key]} onChange={event => setRuntime(key, Number(event.target.value))} /></Field>)}</div><p className="field-hint">流式开始输出后按无数据超时和整次请求总时间上限控制；客户端取消请求后停止后续尝试。</p></details>
-        <details className="runtime-options"><summary>定时价格同步与模型发现</summary><div className="form-grid">
+        <details className="runtime-options"><summary><RefreshCw size={15} aria-hidden="true" />定时价格同步与模型发现</summary><div className="form-grid">
           <Field label="价格同步周期（小时）" hint="0 表示关闭，手动价格保持不变。"><input required type="number" min="0" max="720" value={form.runtime.price_sync_hours} onChange={event => setRuntime("price_sync_hours", Number(event.target.value))} /></Field>
           <Field label="模型发现周期（小时）" hint="0 表示关闭，发现结果在渠道中预览，确认同步后修改已选模型。"><input required type="number" min="0" max="720" value={form.runtime.model_sync_hours} onChange={event => setRuntime("model_sync_hours", Number(event.target.value))} /></Field>
         </div>{settings.sync_tasks?.map(task => <p className="field-hint" key={task.name}>{task.name === "prices" ? "价格同步" : "模型发现"}：{task.started_at && !task.finished_at ? "正在运行" : task.summary || "尚未执行"} · 上次成功 {date(task.last_success_at)}{task.error && ` · ${task.error}`}</p>)}</details>

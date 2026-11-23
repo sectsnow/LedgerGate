@@ -155,6 +155,9 @@ func TestPausedAccountPreservesSharedModelAndDirectChannels(t *testing.T) {
 
 func TestFailoverSkipsAccountPausedDuringRequest(t *testing.T) {
 	a := testApp(t)
+	if err := a.DB.Model(&Setting{}).Where("id=1").Update("request_timeout_seconds", 2).Error; err != nil {
+		t.Fatal(err)
+	}
 	h := a.Router()
 	cookie := loginForTest(t, h)
 	account := Account{Name: "backup account", Enabled: true}
@@ -182,6 +185,7 @@ func TestFailoverSkipsAccountPausedDuringRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := createGroup(t, h, cookie, []Channel{one, two}, "priority")
+	routingGroupForTest(t, a, &GroupRelayConfig{1, 1, 60, 300})
 	done := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
 		done <- call(h, "POST", "/v1/chat/completions", `{"model":"my-model","messages":[{"role":"user","content":"hello"}]}`, key)

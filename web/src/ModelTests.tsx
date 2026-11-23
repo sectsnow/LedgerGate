@@ -3,11 +3,13 @@ import { LoaderCircle, Play, Search, Square, Trash2 } from "lucide-react";
 import { api, protocolNames, type AccountRow, type ChannelRow, type Group } from "./api";
 import { ChannelSelection } from "./ChannelBatch";
 import { channelModelNames } from "./ChannelModelEditor";
+import { averageOutputTPS } from "./requestTiming";
 import "./model-tests.css";
 
 type Inventory = { models: string[]; revision: string; removed_routes?: number };
 type Result = {
   success: boolean; status: number; duration_ms: number; first_token_ms: number | null;
+  first_content_ms: number | null;
   generation_ms: number | null; input_tokens: number | null; output_tokens: number | null;
   cache_read_tokens: number | null; cache_write_tokens: number | null;
   usage_warning: string; text: string; error: string;
@@ -205,17 +207,17 @@ export default function ModelTests({ channels, accounts, groups, changed }: {
         <span className="field-hint" role="status">{busy === "loading" ? "正在获取模型…" : `通过 ${passed} · 失败 ${failed.length} · 已选 ${selected.size}`}</span>
       </div>
       <div className="table-scroll model-test-table"><table>
-        <thead><tr><th><ChannelSelection label="选择全部可见测试模型" selected={visible.filter(name => selected.has(name)).length} total={visible.length} disabled={!!busy} toggle={checked => toggle(visible, checked)} /></th><th>模型</th><th>状态</th><th>首字</th><th>总耗时</th><th>输入</th><th>输出</th><th>速度 (tok/s)</th><th>缓存读 / 写</th><th>响应 / 失败原因</th><th>操作</th></tr></thead>
+        <thead><tr><th><ChannelSelection label="选择全部可见测试模型" selected={visible.filter(name => selected.has(name)).length} total={visible.length} disabled={!!busy} toggle={checked => toggle(visible, checked)} /></th><th>模型</th><th>状态</th><th title="Responses 首个语义事件，包含思考项目开始；初始化和心跳不计入。">首字</th><th title="首段正文、公开思考文本或工具内容。">首内容</th><th>总耗时</th><th>输入</th><th>输出</th><th title="输出总 Token ÷ 完整测试耗时，包含思考与等待。">平均 TPS</th><th>缓存读 / 写</th><th>响应 / 失败原因</th><th>操作</th></tr></thead>
         <tbody>{visible.map(name => {
           const row = rows[name]; const result = row?.result; const text = row?.error || result?.error || result?.text;
-          const speed = result?.output_tokens != null && result.generation_ms != null && result.generation_ms > 0 ? (result.output_tokens / (result.generation_ms / 1000)).toFixed(1) : "—";
+          const speed = averageOutputTPS(result?.output_tokens, result?.duration_ms)?.toFixed(1) ?? "—";
           return <tr key={name}><td><input type="checkbox" aria-label={`选择测试模型 ${name}`} checked={selected.has(name)} disabled={!!busy} onChange={event => toggle([name], event.target.checked)} /></td><td><code>{name}</code></td>
             <td><span className={`request-state ${row?.state === "passed" ? "success" : row?.state === "failed" ? "error" : row?.state === "running" ? "active" : ""}`}>{row?.state === "running" && <LoaderCircle size={13} className="spin" />}{row ? stateNames[row.state] : "未测试"}{result?.status ? ` · ${result.status}` : ""}</span></td>
-            <td>{duration(result?.first_token_ms)}</td><td>{duration(result?.duration_ms)}</td><td>{count(result?.input_tokens)}</td><td>{count(result?.output_tokens)}</td><td>{speed}</td><td>{count(result?.cache_read_tokens)} / {count(result?.cache_write_tokens)}</td>
+            <td>{duration(result?.first_token_ms)}</td><td>{duration(result?.first_content_ms)}</td><td>{duration(result?.duration_ms)}</td><td>{count(result?.input_tokens)}</td><td>{count(result?.output_tokens)}</td><td>{speed}</td><td>{count(result?.cache_read_tokens)} / {count(result?.cache_write_tokens)}</td>
             <td className="model-test-response">{text ? <details><summary className={row?.state === "failed" ? "form-error" : ""}>{text.slice(0, 80)}{text.length > 80 ? "…" : ""}</summary><pre>{text}</pre></details> : "—"}{result?.usage_warning && <small>{result.usage_warning}</small>}</td>
             <td><div className="inline-actions"><button className="text-button" disabled={!ready || !validTest} onClick={() => void test([name])}>测试</button><button className="text-button danger" disabled={!!busy || !inventory.revision} onClick={() => void remove([name])}>移除</button></div></td>
           </tr>;
-        })}{!visible.length && <tr><td colSpan={11}><p className="empty-routes">{busy === "loading" ? "正在读取模型…" : !channel ? "该账户暂无渠道，请选择其他账户或先添加渠道。" : models.length ? "没有符合条件的模型" : "暂无模型，可点击“获取模型”读取所选 Key 可用的模型。"}</p></td></tr>}</tbody>
+        })}{!visible.length && <tr><td colSpan={12}><p className="empty-routes">{busy === "loading" ? "正在读取模型…" : !channel ? "该账户暂无渠道，请选择其他账户或先添加渠道。" : models.length ? "没有符合条件的模型" : "暂无模型，可点击“获取模型”读取所选 Key 可用的模型。"}</p></td></tr>}</tbody>
       </table></div>
     </section>
   </div>;

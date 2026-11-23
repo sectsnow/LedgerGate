@@ -208,17 +208,17 @@ func TestRequestMetricsGatewayTimingsAndSnapshots(t *testing.T) {
 				t.Fatal(response.Code, response.Body.String())
 			}
 			log := latestRequestForTest(t, a)
-			if log.MetricsVersion != 1 || log.KeyName != "Ubuntu" || log.ChannelName != channel.Name || log.Model != group.Name || log.UpstreamModel != "actual-upstream-model" || log.Protocol != to || log.UpstreamProtocol != from || !log.UsageRecorded || log.StartedAt == nil || log.FinishedAt == nil {
+			if log.MetricsVersion != 2 || log.KeyName != "Ubuntu" || log.ChannelName != channel.Name || log.Model != group.Name || log.UpstreamModel != "actual-upstream-model" || log.Protocol != to || log.UpstreamProtocol != from || !log.UsageRecorded || log.StartedAt == nil || log.FinishedAt == nil {
 				t.Fatalf("missing request snapshot: %+v", log)
 			}
 			if protocol != "cross" && log.ReasoningEffort != "max" {
 				t.Fatal("reasoning effort not retained")
 			}
 			if stream {
-				if log.FirstTokenMS == nil || *log.FirstTokenMS < 25 || log.GenerationMS == nil || *log.GenerationMS < 25 || log.FirstByteMS == nil || *log.FirstByteMS >= *log.FirstTokenMS || log.CostMicros != 310 || log.InputTokens != 100 || !log.CacheReadRecorded || log.CacheReadTokens != 40 {
+				if log.FirstTokenMS == nil || *log.FirstTokenMS < 25 || log.FirstContentMS == nil || *log.FirstContentMS != *log.FirstTokenMS || log.GenerationMS == nil || *log.GenerationMS < 25 || log.FirstByteMS == nil || *log.FirstByteMS >= *log.FirstTokenMS || log.CostMicros != 310 || log.InputTokens != 100 || !log.CacheReadRecorded || log.CacheReadTokens != 40 {
 					t.Fatalf("metadata counted as first content or invalid cost: %+v", log)
 				}
-			} else if log.FirstTokenMS != nil || log.GenerationMS != nil || log.CostMicros != 600 || log.CacheReadRecorded {
+			} else if log.FirstTokenMS != nil || log.FirstContentMS != nil || log.GenerationMS != nil || log.CostMicros != 600 || log.CacheReadRecorded {
 				t.Fatal("non-stream latency or unknown cache usage invented")
 			}
 			if err := a.DB.Model(&channel).Update("name", "renamed channel").Error; err != nil {

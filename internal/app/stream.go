@@ -23,7 +23,7 @@ func (event sseEvent) kind(body object) string {
 	return event.Event
 }
 
-// 只暂存确定不含输出的启动事件；其他合法事件可透传，首 Token 另按内容计时。
+// 只暂存确定不含输出的启动事件；透传、首字和首内容分别判断。
 func streamEventStartsOutput(event sseEvent, protocol string) bool {
 	if streamEventHasOutput(event, protocol) {
 		return true
@@ -195,13 +195,8 @@ func inspectEvent(event sseEvent, protocol string, result *completion, convert b
 			result.ID = str(message["id"])
 			result.applyUsage(message, protocol)
 		case "message_delta":
-			switch str(obj(body["delta"])["stop_reason"]) {
-			case "tool_use":
-				result.Finish = "tool_calls"
-			case "max_tokens":
-				result.Finish = "length"
-			default:
-				result.Finish = "stop"
+			if reason := str(obj(body["delta"])["stop_reason"]); reason != "" {
+				result.Finish = anthropicFinish(reason)
 			}
 		case "message_stop":
 			return nil, true, nil
@@ -248,6 +243,9 @@ func inspectEvent(event sseEvent, protocol string, result *completion, convert b
 			deltas = append(deltas, streamDelta{Text: str(body["delta"])})
 		}
 	case "response.output_item.added":
+		if str(obj(body["item"])["type"]) == "function_call" {
+			result.Finish = "tool_calls"
+		}
 		if !convert {
 			break
 		}
@@ -266,12 +264,10 @@ func inspectEvent(event sseEvent, protocol string, result *completion, convert b
 	case "response.completed", "response.incomplete":
 		response := obj(body["response"])
 		result.applyUsage(response, protocol)
-		if str(response["status"]) == "failed" || response["error"] != nil {
+		if str(response["status"]) == "failed" || str(response["status"]) == "cancelled" || response["error"] != nil {
 			return nil, false, errors.New("Responses 完成事件报告错误")
 		}
-		if kind == "response.incomplete" {
-			result.Finish = "length"
-		}
+		result.captureResponsesEnd(response, kind == "response.incomplete")
 		return deltas, true, nil
 	}
 	return deltas, false, nil
@@ -433,6 +429,9 @@ func (s *streamWriter) delta(delta streamDelta) error {
 }
 
 func (s *streamWriter) finish(result *completion) error {
+	if result.Finish == "incomplete" && s.protocol != "responses" {
+		return responseProcessingError("上游未完成原因无法转换到目标协议，请使用同协议渠道")
+	}
 	result.ID, result.Text = s.id, s.text.String()
 	tools := []*outputTool{}
 	for _, tool := range s.tools {
@@ -482,6 +481,9 @@ func (s *streamWriter) finish(result *completion) error {
 		if result.Finish == "length" {
 			stop = "max_tokens"
 		}
+		if result.Finish == "content_filter" {
+			stop = "refusal"
+		}
 		if err := s.send("message_delta", object{"delta": object{"stop_reason": stop, "stop_sequence": nil}, "usage": result.usageBody("anthropic")}); err != nil {
 			return err
 		}
@@ -518,7 +520,7 @@ func (s *streamWriter) finish(result *completion) error {
 	}
 	body["output"], body["created_at"] = output, s.created
 	kind := "response.completed"
-	if result.Finish == "length" {
+	if result.Finish == "length" || result.Finish == "content_filter" || result.Finish == "incomplete" {
 		kind = "response.incomplete"
 	}
 	return s.send(kind, object{"response": body})

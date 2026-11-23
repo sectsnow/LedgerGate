@@ -1,7 +1,9 @@
 import type { ReactNode } from "react";
-import { ArrowDownToLine, ArrowRight, ArrowUpFromLine, BrainCircuit, CircleAlert, Clock3, Coins, Database, Gauge, KeyRound, Network, Percent, ReceiptText, Timer } from "lucide-react";
+import { ArrowRight, BrainCircuit, CircleAlert, Clock3, Coins, FileInput, FileOutput, FileText, Gauge, HardDriveDownload, HardDriveUpload, Hourglass, KeyRound, Network, Percent, Radio, ReceiptText, TextCursorInput, Timer } from "lucide-react";
 import { protocolNames, type ChannelRow, type RequestLog } from "./api";
 import type { DataTone } from "./themes";
+import { averageOutputTPS, requestTiming } from "./requestTiming";
+import { requestEndLabel } from "./requestEnd";
 import "./request-metrics.css";
 
 const exact = (value: number) => value.toLocaleString("en-US", { maximumFractionDigits: 0 });
@@ -58,12 +60,14 @@ export default function RequestMetrics({ row, channel, small = false, children }
   const missing = modern ? "未提供" : "未记录";
   const input = known || !modern ? exact(row.input_tokens) : "未提供";
   const output = known || !modern ? exact(row.output_tokens) : "未提供";
-  const first = row.first_token_ms == null ? row.stream ? "未记录" : "不适用" : duration(row.first_token_ms);
+  const timing = requestTiming(row);
+  const first = timing.firstWordMS == null ? row.stream ? "未记录" : "不适用" : duration(timing.firstWordMS);
+  const firstContent = timing.firstContentMS == null ? row.stream ? "未记录" : "不适用" : duration(timing.firstContentMS);
   const generation = row.generation_ms == null ? row.stream ? "未记录" : "不适用" : duration(row.generation_ms);
-  const tps = known && row.generation_ms != null && row.generation_ms > 0 && row.first_token_ms != null ? row.output_tokens * 1000 / row.generation_ms : null;
+  const tps = known ? averageOutputTPS(row.output_tokens, row.duration_ms) : null;
   const hit = known && row.cache_read_recorded && row.input_tokens > 0 ? Math.min(row.cache_read_tokens, row.input_tokens) / row.input_tokens * 100 : null;
   const channelName = row.channel_name || channel?.channel.name || (row.channel_id ? `渠道 #${row.channel_id}` : "未选择渠道");
-  const status = row.state === "interrupted" ? "已中断" : row.state === "streaming" ? "输出中" : row.status === 0 ? "进行中" : row.status === 499 ? "已取消" : row.status < 400 ? "成功" : "失败";
+  const status = row.state === "interrupted" ? "已中断" : row.status === 0 && row.retry_at ? "等待重试" : row.state === "streaming" ? timing.firstContentMS == null ? "已接收响应" : "输出中" : row.status === 0 ? "进行中" : row.status === 499 ? "已取消" : row.status < 400 ? "成功" : "失败";
   const cost = row.cost_status === "unknown" || modern && !known && row.cost_detail?.mode !== "request" ? "待核算" : money(row.cost_micros);
   return (
     <article className={`request-log-card${small ? " request-log-compact" : ""}`} aria-label={`${row.model || "无模型"} 请求 ${row.request_id}`}>
@@ -86,18 +90,21 @@ export default function RequestMetrics({ row, channel, small = false, children }
       </div>
       <div className="request-log-metrics">
         <Metric icon={<Timer size={16} />} label="总耗时" value={duration(row.duration_ms)} />
-        <Metric icon={<Clock3 size={16} />} label="首 Token" value={first} title="从收到请求到向客户端输出首个有效内容，包含此前的重试等待，不含初始化和心跳事件。" />
-        {!small && <Metric icon={<Timer size={16} />} label="生成耗时" value={generation} title="从首个有效内容输出到上游流结束。" />}
-        {!small && <Metric tone="balance" icon={<ArrowDownToLine size={16} />} label="输入总量" value={input} title="包含普通输入、缓存读取和缓存写入，以下缓存数量已包含在总量中。" />}
-        {!small && <Metric tone="balance" icon={<ArrowDownToLine size={16} />} label="普通输入" value={known && row.cache_read_recorded && row.cache_write_recorded ? exact(Math.max(row.input_tokens - Math.min(row.cache_read_tokens, row.input_tokens) - row.cache_write_tokens, 0)) : missing} title="输入总量扣除缓存读取和写入；缓存明细缺失时不推测普通输入数量。" />}
-        {!small && <Metric tone="cost" icon={<Database size={16} />} label="缓存读取" value={known && row.cache_read_recorded ? exact(row.cache_read_tokens) : missing} />}
+        <Metric icon={<Radio size={16} />} label="首字" value={first} title="从收到请求到收到上游首个语义事件；Responses 思考项目开始也计入，初始化和心跳不计入。包含此前重试等待，旧口径记录不补造。" />
+        {!small && <Metric icon={<TextCursorInput size={16} />} label="首内容" value={firstContent} title="从收到请求到收到首段正文、公开思考文本或工具内容；加密思考不等同于可见内容。" />}
+        {!small && <Metric icon={<Hourglass size={16} />} label="输出阶段耗时" value={generation} title="从首内容到上游流结束；整包返回时无法据此推算模型生成速度。" />}
+        {!small && <Metric tone="balance" icon={<FileInput size={16} />} label="输入总量" value={input} title="包含普通输入、缓存读取和缓存写入，以下缓存数量已包含在总量中。" />}
+        {!small && <Metric tone="balance" icon={<FileText size={16} />} label="未缓存输入" value={known && row.cache_read_recorded ? exact(Math.max(row.input_tokens - row.cache_read_tokens, 0)) : missing} title="输入总量减去缓存读取，包含可能发生的缓存写入；无需上游提供缓存写入数量即可计算。" />}
+        {!small && <Metric tone="cost" icon={<HardDriveDownload size={16} />} label="缓存读取" value={known && row.cache_read_recorded ? exact(row.cache_read_tokens) : missing} />}
         {!small && <Metric tone="cost" icon={<Percent size={16} />} label="缓存命中率" value={hit == null ? missing : `${hit.toFixed(2)}%`} title="缓存读取 Token ÷ 输入总 Token。" />}
-        {!small && <Metric tone="cost" icon={<Database size={16} />} label="缓存写入" value={known && row.cache_write_recorded ? exact(row.cache_write_tokens) : missing} />}
-        {!small && <Metric tone="usage" icon={<ArrowUpFromLine size={16} />} label="输出总量" value={output} title={row.reasoning_tokens == null ? "上游返回的输出 Token 总量。" : `包含 ${exact(row.reasoning_tokens)} 个推理 Token，不重复计费。`} />}
-        <Metric tone="usage" icon={<Gauge size={16} />} label="输出速度" value={tps == null ? "未记录" : `${tps.toLocaleString("en-US", { maximumFractionDigits: 2 })} t/s`} title="输出 Token 总数 ÷ 生成耗时；上游返回的推理 Token 包含在输出总量内。" />
+        {!small && <Metric tone="cost" icon={<HardDriveUpload size={16} />} label="缓存写入" value={known && row.cache_write_recorded ? exact(row.cache_write_tokens) : missing} title="仅显示上游明确返回的缓存写入数量；未提供不代表 0，也不影响未缓存输入的计算。" />}
+        {!small && <Metric tone="usage" icon={<FileOutput size={16} />} label="输出总量" value={output} title={row.reasoning_tokens == null ? "上游返回的输出 Token 总量。" : `包含 ${exact(row.reasoning_tokens)} 个推理 Token，不重复计费。`} />}
+        <Metric tone="usage" icon={<Gauge size={16} />} label="平均 TPS" value={tps == null ? "未记录" : `${tps.toLocaleString("en-US", { maximumFractionDigits: 2 })} t/s`} title="输出 Token 总数 ÷ 完整请求耗时，包含排队、思考、网络及重试等待；适用于流式和非流式，不代表模型纯生成速度。" />
         <Metric tone="cost" icon={<Coins size={16} />} label={modern ? "费用估算" : "历史估算"} value={cost} title={row.cost_warning || undefined} />
       </div>
       {(row.error || row.cost_warning || row.usage_warning) && <p className="request-log-warning" role="status"><CircleAlert size={15} />{[row.error, row.cost_warning, row.usage_warning].filter((item, index, values) => item && values.indexOf(item) === index).join("；")}</p>}
+      {row.routing_reason && <p className="request-log-note">选路说明：{row.routing_reason}{row.retry_at && ` · 预计重试于 ${date(row.retry_at)}`}</p>}
+      {row.finish_reason && <p className="request-log-note">上游结束原因：{requestEndLabel(row.finish_reason, row.incomplete_reason)}</p>}
       {!small && <><CostDetails row={row} />{row.finished_at && <div className="request-log-footer"><span>完成于 {date(row.finished_at)}</span></div>}</>}
     </article>
   );

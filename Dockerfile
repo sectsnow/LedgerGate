@@ -9,14 +9,21 @@ COPY web/ ./
 RUN pnpm build
 
 FROM golang:1.26.11-alpine3.23 AS backend
+ARG VCS_REF
+ARG BUILD_DATE
+ARG VCS_MODIFIED
 WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 COPY web/embed.go ./web/embed.go
+COPY web/package.json ./web/package.json
 COPY --from=frontend /build/web/static/app ./web/static/app
-RUN CGO_ENABLED=0 GOTOOLCHAIN=local go build -trimpath -ldflags="-s -w" -o /out/ledgergate ./cmd/ledgergate
+RUN ledgergate_build_time="${BUILD_DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" \
+    && CGO_ENABLED=0 GOTOOLCHAIN=local go build -trimpath \
+       -ldflags="-s -w -X ledgergate/internal/app.buildRevision=${VCS_REF} -X ledgergate/internal/app.buildTime=${ledgergate_build_time} -X ledgergate/internal/app.buildModified=${VCS_MODIFIED}" \
+       -o /out/ledgergate ./cmd/ledgergate
 
 FROM alpine:3.23.8 AS runtime
 RUN apk add --no-cache ca-certificates tzdata \

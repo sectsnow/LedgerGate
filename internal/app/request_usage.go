@@ -6,7 +6,7 @@ import (
 )
 
 var requestDayColumns = []string{"requests", "errors", "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "cache_write1h_tokens", "cost_micros", "cost_unknown_requests"}
-var requestHourColumns = []string{"requests", "errors", "successes", "input_tokens", "output_tokens", "cost_micros", "cost_unknown_requests", "duration_ms", "first_token_ms", "first_token_count", "generation_ms", "generation_tokens"}
+var requestHourColumns = []string{"requests", "errors", "successes", "input_tokens", "output_tokens", "cost_micros", "cost_unknown_requests", "duration_ms", "first_token_ms", "first_token_count", "semantic_first_token_ms", "semantic_first_token_count", "generation_ms", "generation_tokens"}
 
 func incrementSummary(tx *gorm.DB, row any, table string, keys []clause.Column, columns []string) error {
 	updates := map[string]any{}
@@ -37,6 +37,9 @@ func recordRequestUsage(tx *gorm.DB, log *RequestLog) error {
 	}
 	if log.FirstTokenMS != nil {
 		hour.FirstTokenMS, hour.FirstTokenCount = *log.FirstTokenMS, 1
+		if log.MetricsVersion >= 2 {
+			hour.SemanticFirstTokenMS, hour.SemanticFirstTokenCount = *log.FirstTokenMS, 1
+		}
 	}
 	if log.GenerationMS != nil && *log.GenerationMS > 0 {
 		hour.GenerationMS, hour.GenerationTokens = *log.GenerationMS, log.OutputTokens

@@ -58,8 +58,8 @@ func (a *App) requestQuality(c *gin.Context) {
             COALESCE(SUM(input_tokens),0) AS input_tokens, COALESCE(SUM(output_tokens),0) AS output_tokens,
 			COALESCE(SUM(cost_micros),0) AS cost_micros, SUM(cost_unknown_requests) AS unknown_costs,
 			1.0*SUM(duration_ms)/NULLIF(SUM(requests),0) AS average_duration_ms,
-			1.0*SUM(first_token_ms)/NULLIF(SUM(first_token_count),0) AS average_first_token_ms,
-			1000.0*SUM(generation_tokens)/NULLIF(SUM(generation_ms),0) AS output_per_second`).
+			1.0*SUM(semantic_first_token_ms)/NULLIF(SUM(semantic_first_token_count),0) AS average_first_token_ms,
+			1000.0*NULLIF(SUM(output_tokens),0)/NULLIF(SUM(duration_ms),0) AS output_per_second`).
 		Group(group).Order("requests DESC").Limit(500)
 	if err := query.Scan(&rows).Error; err != nil {
 		fail(c, 500, "读取渠道与模型统计失败")

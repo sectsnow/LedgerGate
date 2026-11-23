@@ -167,6 +167,20 @@ export type GroupRelayConfig = {
   member_cooldown_seconds: number;
   member_affinity_seconds: number;
 };
+export type RouteRuntime = {
+  route_id: number;
+  state: "available" | "current" | "standby" | "disabled" | "cooling" | "probing" | "recovery";
+  cooldown_until?: string;
+  scope?: "channel" | "route";
+  error?: string;
+};
+export type GroupRuntime = {
+  group_id: number;
+  current_route_id: number;
+  probe_route_id: number;
+  affinity_until?: string;
+  routes: RouteRuntime[];
+};
 export type Group = {
   id: number;
   name: string;
@@ -240,14 +254,19 @@ export type RequestLog = {
   started_at: string | null;
   finished_at: string | null;
   first_token_ms: number | null;
+  first_content_ms: number | null;
   generation_ms: number | null;
   cost_detail: RequestCostDetail | null;
   error: string;
   created_at: string;
   state: string;
   first_byte_ms: number | null;
+  routing_reason?: string;
+  retry_at?: string | null;
+  finish_reason?: string;
+  incomplete_reason?: string;
 };
-export type RequestPage = { items: RequestLog[]; total: number; page: number; page_size: number; active: number };
+export type RequestListResult = { items: RequestLog[]; total: number; active: number };
 export type RequestDetail = {
   request: RequestLog;
   detail: {
@@ -256,7 +275,7 @@ export type RequestDetail = {
     response_body: string;
     request_truncated: boolean;
     response_truncated: boolean;
-    attempts: { channel_id: number; channel_name: string; model: string; protocol: string; started_at: string; duration_ms: number; status: number; error: string }[];
+    attempts: { channel_id: number; channel_name: string; model: string; protocol: string; started_at: string; duration_ms: number; status: number; error: string; reason?: string; upstream_status?: number; upstream_request_id?: string; finish_reason?: string; incomplete_reason?: string }[];
   };
 };
 export type Alert = {
@@ -419,7 +438,14 @@ export type RequestDay = {
   cost_micros: number;
   cost_unknown_requests: number;
 };
+export type BackendBuild = {
+  version: string;
+  revision: string;
+  built_at: string;
+  modified?: boolean;
+};
 export type Data = {
+  build?: BackendBuild | null;
   accounts: AccountRow[];
   channels: ChannelRow[];
   groups: Group[];

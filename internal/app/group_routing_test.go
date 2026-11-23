@@ -423,7 +423,7 @@ func TestGroupRelayConfigValidationPersistenceAndTransfer(t *testing.T) {
 	}
 }
 
-func TestGroupRoutingStreamExtensionsCommitWithoutInventingFirstToken(t *testing.T) {
+func TestGroupRoutingStreamExtensionsCommitWithoutInventingFirstContent(t *testing.T) {
 	for _, protocol := range []string{"openai", "responses", "anthropic"} {
 		t.Run(protocol, func(t *testing.T) {
 			a := testApp(t)
@@ -459,8 +459,8 @@ func TestGroupRoutingStreamExtensionsCommitWithoutInventingFirstToken(t *testing
 			}
 			response := call(h, "POST", requestPath(protocol), jsonString(body), token)
 			log := latestRequestForTest(t, a)
-			if response.Code != 200 || log.Status != 502 || log.Attempts != 1 || log.FirstTokenMS != nil || primaryCalls.Load() != 1 || backupCalls.Load() != 0 || !strings.Contains(response.Body.String(), "extension-payload") {
-				t.Fatalf("extension dropped, timed as first token, or replayed: %+v body=%s", log, response.Body.String())
+			if response.Code != 200 || log.Status != 502 || log.Attempts != 1 || log.FirstContentMS != nil || (log.FirstTokenMS != nil) != (protocol == "responses") || primaryCalls.Load() != 1 || backupCalls.Load() != 0 || !strings.Contains(response.Body.String(), "extension-payload") {
+				t.Fatalf("extension dropped, timed as first content, or replayed: %+v body=%s", log, response.Body.String())
 			}
 		})
 	}

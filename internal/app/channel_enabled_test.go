@@ -91,6 +91,9 @@ func TestChannelSwitchBlocksAndRestoresForwarding(t *testing.T) {
 
 func TestFailoverSkipsChannelDisabledDuringRequest(t *testing.T) {
 	a := testApp(t)
+	if err := a.DB.Model(&Setting{}).Where("id=1").Update("request_timeout_seconds", 2).Error; err != nil {
+		t.Fatal(err)
+	}
 	h := a.Router()
 	cookie := loginForTest(t, h)
 	entered, release := make(chan struct{}), make(chan struct{})
@@ -111,6 +114,7 @@ func TestFailoverSkipsChannelDisabledDuringRequest(t *testing.T) {
 	one := createChannel(t, h, cookie, "primary", first.URL, "openai")
 	two := createChannel(t, h, cookie, "backup", backup.URL, "openai")
 	key := createGroup(t, h, cookie, []Channel{one, two}, "priority")
+	routingGroupForTest(t, a, &GroupRelayConfig{1, 1, 60, 300})
 	done := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
 		done <- call(h, "POST", "/v1/chat/completions", `{"model":"my-model","messages":[{"role":"user","content":"hello"}]}`, key)

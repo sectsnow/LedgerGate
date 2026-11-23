@@ -171,12 +171,13 @@ func (a *App) forward(c *gin.Context, protocol string) {
 	timings := requestTimings{Started: started}
 	requestID := "req_" + randomToken()[:20]
 	c.Header("X-Request-ID", requestID)
-	log := RequestLog{RequestID: requestID, KeyID: c.GetUint("key_id"), KeyName: c.GetString("key_name"), Protocol: protocol, Status: 502, CreatedAt: started, StartedAt: &started, MetricsVersion: 1, CostStatus: "unknown"}
+	log := RequestLog{RequestID: requestID, KeyID: c.GetUint("key_id"), KeyName: c.GetString("key_name"), Protocol: protocol, Status: 502, CreatedAt: started, StartedAt: &started, MetricsVersion: 2, CostStatus: "unknown"}
 	trace := a.beginRequestTrace(&log)
 	c.Set("request_trace", trace)
 	responseWriter := &requestCaptureWriter{ResponseWriter: c.Writer, trace: trace, ctx: c.Request.Context()}
 	c.Writer = responseWriter
 	defer func() {
+		log.RetryAt = nil
 		timings.apply(&log)
 		a.finishRequestTrace(trace, &log)
 	}()
@@ -224,7 +225,9 @@ func (a *App) forward(c *gin.Context, protocol string) {
 	}
 	var candidates []candidate
 	excludedRoutes, excludedChannels := map[uint]bool{}, map[uint]bool{}
+	blockedChannels := map[uint]bool{}
 	memberAttempts := map[uint]int{}
+	var previousRoute uint
 	var retry *candidate
 	retryProbe := false
 	retryRevision := ""
@@ -242,7 +245,9 @@ func (a *App) forward(c *gin.Context, protocol string) {
 		config := group.relayConfig()
 		if group.Strategy == "priority" && retryable && memberAttempts[item.Route.ID] < config.MemberMaxAttempts {
 			if log.Attempts < options.MaxAttempts {
-				timer := time.NewTimer(time.Duration(config.MemberRetryIntervalSeconds) * time.Second)
+				interval := time.Duration(config.MemberRetryIntervalSeconds) * time.Second
+				trace.waitForRoute(&log, "等待同成员重试："+log.Error, time.Now().Add(interval))
+				timer := time.NewTimer(interval)
 				defer timer.Stop()
 				select {
 				case <-requestCtx.Done():
@@ -268,12 +273,24 @@ func (a *App) forward(c *gin.Context, protocol string) {
 			break
 		}
 		if log.Attempts >= options.MaxAttempts {
-			log.Error = "已达到上游尝试次数上限"
+			if log.Error != "" {
+				log.Error += "；"
+			}
+			log.Error += "已达到上游尝试次数上限"
 			break
 		}
 		if err := a.DB.WithContext(requestCtx).Preload("Routes").First(&group, group.ID).Error; err != nil {
+			if c.Request.Context().Err() != nil {
+				log.Status, log.Error = 499, "客户端已断开"
+				return
+			}
+			if requestCtx.Err() != nil {
+				log.Status, log.Error = 504, "请求已达到总时间上限"
+				break
+			}
 			log.Status, log.Error = 404, "模型路由已不存在或无法读取"
-			break
+			fail(c, log.Status, log.Error)
+			return
 		}
 		candidates = a.candidates(group)
 		if protocol == "responses" && (body["previous_response_id"] != nil || body["conversation"] != nil) {
@@ -288,6 +305,14 @@ func (a *App) forward(c *gin.Context, protocol string) {
 				return
 			}
 		}
+		compatible, compatibilityError := compatibleCandidates(candidates, body, protocol)
+		if len(compatible) == 0 && compatibilityError != nil {
+			log.Status, log.Error = 400, "所有可选成员均无法处理本次请求："+compatibilityError.Error()
+			fail(c, log.Status, log.Error)
+			return
+		}
+		skippedIncompatible := len(candidates) - len(compatible)
+		candidates = compatible
 		var item candidate
 		ok, probe := false, false
 		if retry != nil && retryRevision == groupRoutingRevision(group) {
@@ -307,7 +332,23 @@ func (a *App) forward(c *gin.Context, protocol string) {
 			item, ok, probe = a.pickGroup(group, candidates, excludedRoutes, excludedChannels)
 		}
 		if !ok {
-			break
+			until, waitable := a.groupRetryAt(group, candidates, blockedChannels)
+			if !waitable {
+				break
+			}
+			trace.waitForRoute(&log, "成员暂不可用，等待冷却或恢复探测结束", until)
+			// 短间隔重读配置，让停用、改路由及其他请求的恢复结果及时生效。
+			timer := time.NewTimer(min(max(time.Until(until), 0), time.Second))
+			select {
+			case <-requestCtx.Done():
+			case <-timer.C:
+			}
+			timer.Stop()
+			excludedRoutes, excludedChannels, memberAttempts = map[uint]bool{}, map[uint]bool{}, map[uint]int{}
+			for id := range blockedChannels {
+				excludedChannels[id] = true
+			}
+			continue
 		}
 		excludedRoutes[item.Route.ID] = true
 		if group.Strategy != "priority" {
@@ -367,7 +408,7 @@ func (a *App) forward(c *gin.Context, protocol string) {
 			attemptCtx, cancel = context.WithCancel(requestCtx)
 			firstOutputTimeout = min(firstOutputTimeout, time.Duration(item.Channel.TimeoutSeconds)*time.Second)
 		} else {
-			attemptCtx, cancel = context.WithTimeout(requestCtx, time.Duration(item.Channel.TimeoutSeconds)*time.Second)
+			attemptCtx, cancel = context.WithTimeoutCause(requestCtx, time.Duration(item.Channel.TimeoutSeconds)*time.Second, errChannelResponseTimeout)
 		}
 		ctx, cancelCause := context.WithCancelCause(attemptCtx)
 		guard := newUpstreamGuard(cancelCause, firstOutputTimeout, time.Duration(options.StreamIdleSeconds)*time.Second)
@@ -385,13 +426,22 @@ func (a *App) forward(c *gin.Context, protocol string) {
 			continue
 		}
 		setUpstreamAuth(req, upstreamProtocol, key)
+		copyNativeRequestHeaders(req, c.Request, protocol, upstreamProtocol)
 		req.Header.Set("Content-Type", "application/json")
 		if log.Stream {
 			req.Header.Set("Accept", "text/event-stream")
 		}
 		log.ChannelID, log.Attempts = item.Channel.ID, log.Attempts+1
 		memberAttempts[item.Route.ID]++
+		log.RoutingReason = a.groupSelectionReason(group, item, probe, memberAttempts[item.Route.ID], previousRoute, log.Error)
+		if skippedIncompatible > 0 {
+			log.RoutingReason = fmt.Sprintf("跳过 %d 个不兼容成员；%s", skippedIncompatible, log.RoutingReason)
+		}
+		log.RetryAt = nil
+		log.FinishReason, log.IncompleteReason = "", ""
+		previousRoute = item.Route.ID
 		rate := a.recordRequestRoute(&log, item.Route, item.Channel, upstreamProtocol)
+		timings.First, timings.FirstContent, timings.Finished = time.Time{}, time.Time{}, time.Time{}
 		a.traceAttempt(trace, log)
 		resp, err := a.doRequest(req, item.Channel.UseProxy)
 		if err != nil {
@@ -406,6 +456,11 @@ func (a *App) forward(c *gin.Context, protocol string) {
 			if cause != nil {
 				log.Error = cause.Error()
 			}
+			if requestCtx.Err() != nil {
+				log.Status, log.Error = 504, "请求已达到总时间上限"
+				trace.endAttempt(log.Status, log.Error)
+				break
+			}
 			var connectionErr upstreamConnectionError
 			connectionFailure := errors.As(err, &connectionErr)
 			if cause == nil && !connectionFailure {
@@ -418,6 +473,7 @@ func (a *App) forward(c *gin.Context, protocol string) {
 			failure(item, probe, true, connectionFailure && cause == nil, nil)
 			continue
 		}
+		trace.attemptResponse(resp)
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			guard.Close()
 			resp.Body.Close()
@@ -431,6 +487,7 @@ func (a *App) forward(c *gin.Context, protocol string) {
 			channelFailure := resp.StatusCode == 401 || resp.StatusCode == 403
 			if channelFailure {
 				excludedChannels[item.Channel.ID] = true
+				blockedChannels[item.Channel.ID] = true
 			}
 			failure(item, probe, resp.StatusCode >= 500 || resp.StatusCode == 408, channelFailure, resp.Header)
 			continue
@@ -457,6 +514,8 @@ func (a *App) forward(c *gin.Context, protocol string) {
 		if err != nil && context.Cause(ctx) != nil {
 			err = context.Cause(ctx)
 		}
+		log.FinishReason, log.IncompleteReason = boundedDiagnostic(result.Finish), boundedDiagnostic(result.IncompleteReason)
+		trace.attemptOutcome(result)
 		timings.Finished = time.Now()
 		resp.Body.Close()
 		cancel()
@@ -537,7 +596,9 @@ func (a *App) pipeResponse(c *gin.Context, resp *http.Response, from, to, model 
 			return result, err
 		}
 		result.applyUsage(body, from)
+		result.captureEnd(body, from)
 		body["model"] = model
+		copyNativeResponseHeaders(c.Writer.Header(), resp.Header)
 		c.Status(200)
 		return result, (render.JSON{Data: body}).Render(c.Writer)
 	}
@@ -565,6 +626,7 @@ func (a *App) pipeStream(c *gin.Context, resp *http.Response, from, to, model st
 	committed := false
 	for {
 		event, err := readEvent(scanner)
+		received := time.Now()
 		if err != nil {
 			if errors.Is(err, bufio.ErrTooLong) {
 				return result, responseProcessingError("单行 SSE 数据超过 4 MiB")
@@ -577,6 +639,11 @@ func (a *App) pipeStream(c *gin.Context, resp *http.Response, from, to, model st
 		deltas, done, err := inspectEvent(event, from, &result, from != to)
 		if err != nil {
 			return result, err
+		}
+		for _, timing := range metrics {
+			if timing != nil && timing.observe(event, from, received) && trace != nil {
+				trace.recordTimings(*timing)
+			}
 		}
 		if trace != nil {
 			trace.mu.Lock()
@@ -606,6 +673,9 @@ func (a *App) pipeStream(c *gin.Context, resp *http.Response, from, to, model st
 				continue
 			}
 			// 同协议缓冲达到上限后按序透传，继续保留首输出和空闲超时保护。
+		}
+		if !committed && from == to {
+			copyNativeResponseHeaders(c.Writer.Header(), resp.Header)
 		}
 		committed = true
 		c.Header("Content-Type", "text/event-stream; charset=utf-8")
@@ -658,13 +728,6 @@ func (a *App) pipeStream(c *gin.Context, resp *http.Response, from, to, model st
 		if callback, ok := c.Get("upstream_committed"); ok && callback != nil {
 			callback.(func())()
 			c.Set("upstream_committed", nil)
-		}
-		for _, timings := range metrics {
-			if timings != nil {
-				if timings.observe(event, from) && trace != nil {
-					trace.recordFirstToken(timings.First.Sub(timings.Started).Milliseconds())
-				}
-			}
 		}
 		if done {
 			if from != to {

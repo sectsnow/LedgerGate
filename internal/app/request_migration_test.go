@@ -66,8 +66,8 @@ func TestRequestMigrationArchivesLegacyAndKeepsAccounting(t *testing.T) {
 		if err := reopened.DB.First(&day, "date = ?", oldDate).Error; err != nil || day.Requests != 9 || day.CostMicros != 987 {
 			t.Fatal("older archived day lost", day, err)
 		}
-		var hourly struct{ Requests, FirstTokenCount, DurationMS, GenerationMS int64 }
-		if err := reopened.DB.Model(&RequestHour{}).Select("SUM(requests) AS requests, SUM(first_token_count) AS first_token_count, SUM(duration_ms) AS duration_ms, SUM(generation_ms) AS generation_ms").Scan(&hourly).Error; err != nil || hourly.Requests != 2 || hourly.FirstTokenCount != 2 || hourly.DurationMS != 2000 || hourly.GenerationMS != 1600 {
+		var hourly struct{ Requests, FirstTokenCount, SemanticFirstTokenCount, DurationMS, GenerationMS int64 }
+		if err := reopened.DB.Model(&RequestHour{}).Select("SUM(requests) AS requests, SUM(first_token_count) AS first_token_count, SUM(semantic_first_token_count) AS semantic_first_token_count, SUM(duration_ms) AS duration_ms, SUM(generation_ms) AS generation_ms").Scan(&hourly).Error; err != nil || hourly.Requests != 2 || hourly.FirstTokenCount != 2 || hourly.SemanticFirstTokenCount != 0 || hourly.DurationMS != 2000 || hourly.GenerationMS != 1600 {
 			t.Fatal("performance aggregates lost", hourly, err)
 		}
 		for _, model := range []any{&RequestLog{}, &RequestDetail{}} {

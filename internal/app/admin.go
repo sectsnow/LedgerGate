@@ -58,11 +58,14 @@ func (a *App) Router() http.Handler {
 		}
 		c.Next()
 	})
-	r.GET("/healthz", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok", "app": "LedgerGate"}) })
+	r.GET("/healthz", func(c *gin.Context) {
+		c.JSON(200, gin.H{"status": "ok", "app": "LedgerGate", "build": currentBuildInfo()})
+	})
 	r.POST("/api/login", a.login)
 	r.GET("/api/setup", a.setupStatus)
 	r.POST("/api/setup", a.setupAdmin)
 	api := r.Group("/api", a.admin)
+	api.GET("/version", a.versionInfo)
 	api.GET("/session", func(c *gin.Context) { c.JSON(200, gin.H{"authenticated": true}) })
 	api.GET("/admin/password", a.adminPasswordStatus)
 	api.PUT("/admin/password", a.changeAdminPassword)
@@ -111,6 +114,7 @@ func (a *App) Router() http.Handler {
 	api.POST("/channels/:id/model-tests/models", a.channelTestModels)
 	api.POST("/channels/:id/model-tests", a.testChannelModel)
 	api.POST("/channels/:id/models/remove", a.removeChannelTestModels)
+	api.GET("/groups/routing", a.groupRuntimeStatus)
 	api.GET("/groups", func(c *gin.Context) {
 		items := []Group{}
 		if err := a.DB.Preload("Routes", func(db *gorm.DB) *gorm.DB { return db.Order("priority, id") }).Order("id").Find(&items).Error; err != nil {
