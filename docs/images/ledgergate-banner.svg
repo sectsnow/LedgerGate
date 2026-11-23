@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="240" viewBox="0 0 1440 240" fill="none" role="img" aria-labelledby="title description">
+  <title id="title">LedgerGate</title>
+  <desc id="description">自托管 LLM 网关与上游账户管理台</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1440" y2="240" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#101D38"/>
+      <stop offset="0.6" stop-color="#172F50"/>
+      <stop offset="1" stop-color="#144C57"/>
+    </linearGradient>
+    <linearGradient id="flow" x1="950" y1="0" x2="1440" y2="240" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4987FF"/>
+      <stop offset="1" stop-color="#54D8CC"/>
+    </linearGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0V32" stroke="#D8E9FF" stroke-opacity="0.055"/>
+    </pattern>
+  </defs>
+  <rect width="1440" height="240" rx="18" fill="url(#background)"/>
+  <rect width="1440" height="240" rx="18" fill="url(#grid)"/>
+  <path d="M0 238H1440" stroke="url(#flow)" stroke-width="4"/>
+  <g transform="translate(52 86) scale(.72)" stroke-linecap="round" stroke-linejoin="round" stroke-width="11">
+    <path d="M12 20H27Q36 20 43 29L58 48H76M12 48H76" stroke="#7BA9FF"/>
+    <path d="M12 76H27Q36 76 43 67L58 48" stroke="#54D8CC"/>
+    <path d="M70 31 89 48 70 65Z" fill="#7BA9FF" stroke="none"/>
+  </g>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif">
+    <text x="150" y="69" fill="#8EB1D4" font-size="14" letter-spacing="3">SELF-HOSTED · LLM GATEWAY</text>
+    <text x="146" y="132" fill="#FFFFFF" font-size="56" font-weight="650" letter-spacing="-1.5">LedgerGate</text>
+    <text x="150" y="181" fill="#D8E9F8" font-size="25" letter-spacing="1">自托管 LLM 网关与上游账户管理台</text>
+  </g>
+  <g stroke="url(#flow)" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M945 59H1031Q1061 59 1080 81L1115 120H1284" stroke-width="12"/>
+    <path d="M945 181H1031Q1061 181 1080 159L1115 120" stroke-width="12"/>
+    <path d="M945 120H1284" stroke-width="12"/>
+    <path d="M1264 91 1296 120 1264 149" stroke-width="12"/>
+  </g>
+  <g fill="#D8E9F8" fill-opacity="0.8">
+    <circle cx="916" cy="59" r="5"/>
+    <circle cx="916" cy="120" r="5"/>
+    <circle cx="916" cy="181" r="5"/>
+  </g>
+</svg>
