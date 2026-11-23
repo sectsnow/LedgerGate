@@ -30,8 +30,8 @@ func transferPricing(price *modelPricing) bool {
 }
 
 func (doc transferDocument) validate() error {
-	if doc.Format != "LedgerGate" || doc.Version != 1 || doc.ExportedAt.IsZero() {
-		return errors.New("只支持 LedgerGate v1 配置数据包")
+	if doc.Format != "LedgerGate" || (doc.Version != 1 && doc.Version != 2) || doc.ExportedAt.IsZero() {
+		return errors.New("只支持 LedgerGate v1/v2 配置数据包")
 	}
 	if _, err := normalizeTransferSections(doc.Sections, doc.Sections); err != nil {
 		return err
@@ -53,6 +53,12 @@ func (doc transferDocument) validate() error {
 		return true
 	}
 	for _, row := range doc.Accounts {
+		if row.Icon != nil {
+			body, _ := prepareAccountIcon(row.Icon.Body)
+			if doc.Version < 2 || len(row.Icon.Body) > accountIconLimit || len(body) == 0 {
+				return errors.New("账户图标无效或超过 512 KiB")
+			}
+		}
 		base, err := validURL(row.BaseURL)
 		if !addID(accountIDs, row.ID) || !transferName(row.Name, 100) || !slices.Contains([]string{"newapi", "sub2api"}, row.Kind) || !slices.Contains([]string{"token", "password"}, row.AuthMode) || err != nil || base != row.BaseURL || row.IntervalSeconds < 30 || row.IntervalSeconds > 86400 || row.QuotaPerUnit <= 0 || row.LowBalance < 0 || len(row.Currency) > 20 || len(row.Username) > 250 || len(row.UserID) > 100 {
 			return errors.New("账户配置无效，请检查名称、地址、认证方式和采集间隔")

@@ -8,7 +8,6 @@ import {
   ArrowUpDown,
   Bell,
   BellRing,
-  Check,
   ChevronDown,
   ChevronRight,
   CircleHelp,
@@ -18,7 +17,6 @@ import {
   CircleX,
   Clock3,
   Coins,
-  Copy,
   Database,
   ExternalLink,
   FileText,
@@ -75,13 +73,15 @@ import {
   type UpstreamRate,
 } from "./api";
 import "@fontsource-variable/geist";
-import { copyText } from "./clipboard";
+import CopyButton from "./CopyButton";
 import ImportChannels from "./ImportChannels";
 import GenerateModels from "./GenerateModels";
 import ModelPrice from "./ModelPrice";
 import ModelTests from "./ModelTests";
 import BrandMark from "./BrandMark";
 import AccountLogo from "./AccountLogo";
+import AccountLogoEditor from "./AccountLogoEditor";
+import AccountTokenField from "./AccountTokenField";
 import RequestHistory, { RequestList } from "./RequestHistory";
 import ChannelBatch, { ChannelSelection } from "./ChannelBatch";
 import ChannelModelSync from "./ChannelModelSync";
@@ -279,10 +279,12 @@ function Dialog({
   title,
   children,
   close,
+  className,
 }: {
   title: string;
   children: React.ReactNode;
   close: () => void;
+  className?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleID = React.useId();
@@ -294,6 +296,7 @@ function Dialog({
   return (
     <dialog
       ref={ref}
+      className={className}
       onCancel={(event) => {
         event.preventDefault();
         close();
@@ -308,53 +311,6 @@ function Dialog({
       </header>
       {children}
     </dialog>
-  );
-}
-function CopyButton({
-  text,
-  label = "复制",
-  disabled = false,
-}: {
-  text: string | (() => Promise<string>);
-  label?: string;
-  disabled?: boolean;
-}) {
-  const [copied, setCopied] = useState(false);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  return (
-    <>
-      <button
-        type="button"
-        className="icon-button copy-button"
-        aria-label={label}
-        disabled={disabled || busy}
-        onClick={async () => {
-          setBusy(true);
-          setError("");
-          try {
-            const value = typeof text === "function" ? await text() : text;
-            await copyText(value);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
-          } catch (e) {
-            setError((e as Error).message);
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        {busy ? (
-          <LoaderCircle size={16} className="spin" />
-        ) : copied ? (
-          <Check size={16} />
-        ) : (
-          <Copy size={16} />
-        )}
-        {copied ? "已复制" : label}
-      </button>
-      {error && <small role="alert">{error}</small>}
-    </>
   );
 }
 
@@ -2143,6 +2099,7 @@ function AccountForm({
   close: () => void;
   saved: () => Promise<void>;
 }) {
+  const formID = React.useId();
   const [form, setForm] = useState(() => ({
     name: "",
     kind: "newapi",
@@ -2169,13 +2126,19 @@ function AccountForm({
   );
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const tokenPairError = form.auth_mode === "token" && form.kind === "sub2api" && form.refresh_token.trim() && !form.token.trim()
+    ? "请同时填写新的 Access Token，以保存这组 Refresh Token。" : "";
   const set = (key: string, value: unknown) =>
     setForm((previous) => ({ ...previous, [key]: value }));
   return (
-    <Dialog title={row ? "编辑上游账户" : "接入上游账户"} close={close}>
+    <Dialog title={row ? "编辑上游账户" : "接入上游账户"} close={close} className="account-dialog">
+      <div className="account-dialog-scroll">
+      {row && <AccountLogoEditor account={row.account} />}
       <form
+        id={formID}
         onSubmit={async (e) => {
           e.preventDefault();
+          if (tokenPairError) { setError(tokenPairError); return; }
           setBusy(true);
           setError("");
           try {
@@ -2247,7 +2210,8 @@ function AccountForm({
           {form.auth_mode === "token" ? (
             <>
               <div className="full">
-                <Field
+                <AccountTokenField
+                  key={form.kind}
                   label={
                     form.kind === "sub2api" ? "Access Token" : "账户访问令牌"
                   }
@@ -2256,35 +2220,36 @@ function AccountForm({
                       ? "已保存，留空保留。请使用后台账户令牌。"
                       : "使用站点后台账户令牌。转发 API Key 在渠道中配置。"
                   }
-                >
-                  <input
-                    type="password"
-                    autoComplete="off"
-                    required={!row?.has_token}
-                    value={form.token}
-                    onChange={(e) => set("token", e.target.value)}
-                  />
-                </Field>
+                  accountId={row?.account.id}
+                  field="token"
+                  hasSaved={row?.has_token}
+                  required={!row?.has_token}
+                  disabled={busy}
+                  value={form.token}
+                  onChange={value => set("token", value)}
+                />
               </div>
               {form.kind === "sub2api" && (
                 <div className="full">
-                  <Field
+                  <AccountTokenField
                     label="Refresh Token"
                     hint={
                       row?.has_refresh_token
                         ? "已保存，两个令牌均留空时保留。填写新 Refresh Token 时请同时填写对应的 Access Token。"
                         : "可选，用于 Access Token 过期后自动续期。填写时请同时填写对应的 Access Token。"
                     }
-                  >
-                    <input
-                      type="password"
-                      autoComplete="off"
-                      value={form.refresh_token}
-                      onChange={(e) => set("refresh_token", e.target.value)}
-                    />
-                  </Field>
+                    accountId={row?.account.id}
+                    field="refresh_token"
+                    hasSaved={row?.has_refresh_token}
+                    disabled={busy}
+                    value={form.refresh_token}
+                    onChange={value => set("refresh_token", value)}
+                    validationError={tokenPairError}
+                  />
                   <p className="field-hint">
-                    单独更换 Access Token 会清除旧 Refresh Token。
+                    {form.token.trim() && !form.refresh_token.trim() && row?.has_refresh_token
+                      ? "保存后将清除旧 Refresh Token；如需自动续期，请同时填写配套的新 Refresh Token。"
+                      : "单独更换 Access Token 会清除旧 Refresh Token。"}
                   </p>
                 </div>
               )}
@@ -2396,15 +2361,16 @@ function AccountForm({
             {error}
           </p>
         )}
+      </form>
+      </div>
         <div className="form-footer">
           <button type="button" className="secondary" onClick={close}>
             取消
           </button>
-          <Button className="primary" busy={busy} type="submit">
+          <Button className="primary" busy={busy} disabled={!!tokenPairError} type="submit" form={formID}>
             保存账户
           </Button>
         </div>
-      </form>
     </Dialog>
   );
 }

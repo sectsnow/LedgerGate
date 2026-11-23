@@ -1,8 +1,16 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
+	"hash/crc32"
+	"image"
+	"image/gif"
+	"image/jpeg"
+	"image/png"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -45,7 +53,7 @@ func TestAccountIconDeclaredCacheAndURLChange(t *testing.T) {
 	cookie := loginForTest(t, h)
 	for i := 0; i < 2; i++ {
 		response := call(h, "GET", path, "", cookie)
-		if response.Code != 200 || response.Body.String() != testAccountSVG || response.Header().Get("Content-Type") != "image/svg+xml" || response.Header().Get("Cache-Control") != "private, max-age=86400" || !strings.Contains(response.Header().Get("Content-Security-Policy"), "sandbox") {
+		if response.Code != 200 || response.Body.String() != testAccountSVG || response.Header().Get("Content-Type") != "image/svg+xml" || response.Header().Get("Cache-Control") != "private, no-cache" || !strings.Contains(response.Header().Get("Content-Security-Policy"), "sandbox") {
 			t.Fatal("declared icon response incorrect", response.Code, response.Body.String())
 		}
 	}
@@ -55,8 +63,8 @@ func TestAccountIconDeclaredCacheAndURLChange(t *testing.T) {
 	a.mu.Lock()
 	a.accountIcons[account.ID].expires = time.Now().Add(-time.Second)
 	a.mu.Unlock()
-	if response := call(h, "GET", path, "", cookie); response.Code != 200 || calls.Load() != 4 {
-		t.Fatal("expired icon was not refreshed")
+	if response := call(h, "GET", path, "", cookie); response.Code != 200 || calls.Load() != 2 {
+		t.Fatal("saved icon unnecessarily depended on the expiring memory cache")
 	}
 	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
@@ -115,7 +123,7 @@ func TestAccountIconFallbackAndNegativeCache(t *testing.T) {
 			cookie := loginForTest(t, h)
 			response := call(h, "GET", fmt.Sprintf("/api/accounts/%d/icon", account.ID), "", cookie)
 			if mode == "none" {
-				if response.Code != 404 || response.Header().Get("Cache-Control") != "private, max-age=3600" {
+				if response.Code != 404 || response.Header().Get("Cache-Control") != "no-store" {
 					t.Fatal("missing icon was not negatively cached")
 				}
 			} else if response.Code != 200 || response.Body.String() != testAccountSVG {
@@ -127,6 +135,105 @@ func TestAccountIconFallbackAndNegativeCache(t *testing.T) {
 				t.Fatal("cached result fetched again")
 			}
 		})
+	}
+}
+
+func TestAccountIconLargeRasterThumbnail(t *testing.T) {
+	source := image.NewNRGBA(image.Rect(0, 0, 1024, 768))
+	_, _ = rand.New(rand.NewSource(7)).Read(source.Pix)
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, source); err != nil {
+		t.Fatal(err)
+	}
+	raw := encoded.Bytes()
+	if len(raw) <= accountIconLimit || len(raw) > accountIconDownloadLimit {
+		t.Fatal("fixture does not exercise a large logo", len(raw))
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			fmt.Fprint(w, `<link rel="icon" href="/large.png">`)
+			return
+		}
+		_, _ = w.Write(raw)
+	}))
+	defer upstream.Close()
+	a := &App{client: upstream.Client()}
+	body, typeOf := a.fetchAccountIcon(context.Background(), upstream.URL+"/", a.client)
+	config, _, err := image.DecodeConfig(bytes.NewReader(body))
+	if err != nil || typeOf != "image/png" || len(body) > accountIconLimit || config.Width != 128 || config.Height != 96 {
+		t.Fatal("large logo was not reduced to a bounded thumbnail", config, typeOf, len(body), err)
+	}
+	for _, format := range []string{"png", "jpeg", "gif"} {
+		t.Run(format, func(t *testing.T) {
+			var small bytes.Buffer
+			fixture := image.NewRGBA(image.Rect(0, 0, 8, 4))
+			var err error
+			switch format {
+			case "png":
+				err = png.Encode(&small, fixture)
+			case "jpeg":
+				err = jpeg.Encode(&small, fixture, nil)
+			case "gif":
+				err = gif.Encode(&small, fixture, nil)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			original := append([]byte{}, small.Bytes()...)
+			if body, _ := prepareAccountIcon(original); !bytes.Equal(body, original) {
+				t.Fatal("small logo was unnecessarily re-encoded")
+			}
+			padded := append(original, make([]byte, accountIconLimit)...)
+			body, typeOf := prepareAccountIcon(padded)
+			if _, err := png.Decode(bytes.NewReader(body)); err != nil || typeOf != "image/png" {
+				t.Fatal("large raster format could not be reduced", typeOf, err)
+			}
+		})
+	}
+	oversized := append(append([]byte{}, raw...), make([]byte, accountIconDownloadLimit)...)
+	if body, _ := prepareAccountIcon(oversized); len(body) != 0 {
+		t.Fatal("download limit was bypassed")
+	}
+	tooManyPixels := append([]byte{}, raw...)
+	binary.BigEndian.PutUint32(tooManyPixels[16:20], 65535)
+	binary.BigEndian.PutUint32(tooManyPixels[20:24], 65535)
+	binary.BigEndian.PutUint32(tooManyPixels[29:33], crc32.ChecksumIEEE(tooManyPixels[12:29]))
+	if body, _ := prepareAccountIcon(tooManyPixels); len(body) != 0 {
+		t.Fatal("image pixel limit was bypassed")
+	}
+}
+
+func TestAccountIconRetryClearsOnlyFailedCache(t *testing.T) {
+	a := testApp(t)
+	var available atomic.Bool
+	var calls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if available.Load() && r.URL.Path == "/favicon.ico" {
+			fmt.Fprint(w, testAccountSVG)
+			return
+		}
+		w.WriteHeader(404)
+	}))
+	defer upstream.Close()
+	account := tokenTestAccount(t, a, upstream.URL)
+	h := a.Router()
+	cookie := loginForTest(t, h)
+	path := fmt.Sprintf("/api/accounts/%d/icon", account.ID)
+	if response := call(h, "GET", path, "", cookie); response.Code != 404 {
+		t.Fatal("missing icon should fail")
+	}
+	before := calls.Load()
+	available.Store(true)
+	if response := call(h, "GET", path, "", cookie); response.Code != 404 || calls.Load() != before {
+		t.Fatal("negative cache did not protect automatic requests")
+	}
+	if response := call(h, "GET", path+"?refresh=1", "", cookie); response.Code != 200 || response.Body.String() != testAccountSVG || calls.Load() <= before {
+		t.Fatal("manual retry did not recover the logo")
+	}
+	before = calls.Load()
+	if response := call(h, "GET", path+"?refresh=1", "", cookie); response.Code != 200 || calls.Load() != before {
+		t.Fatal("manual retry unnecessarily invalidated a successful cache")
 	}
 }
 

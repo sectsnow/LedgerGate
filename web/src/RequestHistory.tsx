@@ -1,28 +1,20 @@
 import { useEffect, useState, type ComponentType, type ReactNode } from "react";
-import { FileSearch, FileText, LoaderCircle, RefreshCw, Search } from "lucide-react";
+import { Download, FileSearch, FileText, RefreshCw, Search } from "lucide-react";
 import { api, protocolNames, type ChannelRow, type RequestDetail, type RequestLog, type RequestListResult } from "./api";
 import RequestMetrics from "./RequestMetrics";
 import JsonBody from "./JsonBody";
 import { attemptStatusLabel, requestEndLabel } from "./requestEnd";
-import { requestTiming } from "./requestTiming";
+import CopyButton from "./CopyButton";
 
 type DialogComponent = ComponentType<{ title: string; children: ReactNode; close: () => void }>;
-const stateNames: Record<string, string> = { running: "请求中", streaming: "响应中", completed: "已完成", failed: "失败", cancelled: "已取消", interrupted: "已中断" };
 const active = (row: RequestLog) => row.state === "running" || row.state === "streaming";
 const seconds = (ms: number) => `${(ms / 1000).toFixed(2)}s`;
-const date = (value: string | null) => value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "—";
 const count = (value: number | undefined) => (value || 0).toLocaleString("zh-CN");
-
-function State({ row }: { row: RequestLog }) {
-  return <span className={`request-state ${active(row) ? "active" : row.status >= 400 ? "error" : "success"}`}>
-    {active(row) && <LoaderCircle size={13} className="spin" />}
-    {active(row) && row.retry_at ? "等待重试" : stateNames[row.state] || (row.status >= 400 ? "失败" : "已完成")}{!active(row) && row.status > 0 ? ` · ${row.status}` : ""}
-  </span>;
-}
 
 function Detail({ id, dialog: Dialog, close }: { id: number; dialog: DialogComponent; close: () => void }) {
   const [value, setValue] = useState<RequestDetail | null>(null);
   const [error, setError] = useState("");
+  const [expired, setExpired] = useState(false);
   useEffect(() => {
     let stopped = false;
     let terminal = false;
@@ -33,7 +25,13 @@ function Detail({ id, dialog: Dialog, close }: { id: number; dialog: DialogCompo
       try {
         const next = await api<RequestDetail>(`/requests/${id}`);
         if (!stopped) { setValue(next); setError(""); terminal = !active(next.request); }
-      } catch (error) { if (!stopped) setError((error as Error).message); }
+      } catch (error) {
+        if (!stopped) {
+          if (error instanceof Error && "status" in error && error.status === 404) {
+            terminal = true; setExpired(true); setError("");
+          } else { setError((error as Error).message); }
+        }
+      }
       finally { pending = false; }
     }
     void load();
@@ -42,29 +40,37 @@ function Detail({ id, dialog: Dialog, close }: { id: number; dialog: DialogCompo
   }, [id]);
   const row = value?.request;
   const payload = value?.detail;
-  const firstContent = row ? requestTiming(row).firstContentMS : null;
+  function download() {
+    if (!value) return;
+    try {
+      const body = JSON.stringify({ exported_at: new Date().toISOString(), source_unavailable: expired, note: "本文件为当前已获取的脱敏预览，请求和响应各最多 256 KiB；截断状态见 request_truncated、response_truncated，进行中的请求为导出时的快照。", request: value.request, detail: value.detail }, null, 2);
+      const url = URL.createObjectURL(new Blob([body], { type: "application/json;charset=utf-8" }));
+      const link = document.createElement("a");
+      link.href = url; link.download = `ledgergate-${value.request.request_id.replace(/[^a-zA-Z0-9_-]/g, "_") || value.request.id}.json`;
+      document.body.appendChild(link);
+      try { link.click(); } finally { link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
+    } catch (error) { setError((error as Error).message); }
+  }
   return <Dialog title="请求详情" close={close}>
     <div className="request-detail">
       {error && <p className="form-error" role="alert">{error}</p>}
-      {!row ? !error && <p role="status">正在读取请求详情…</p> : <>
-        <div className="request-detail-heading"><div><strong>{row.model || "无模型"}</strong><code>请求编号：{row.request_id}</code></div><State row={row} /></div>
-        <RequestMetrics row={row} />
-        <p className="field-hint">首字节耗时：{row.first_byte_ms == null ? "—" : seconds(row.first_byte_ms)} · <span title="从收到请求到收到首段正文、公开思考文本或工具内容；加密思考不等同于可见内容。">首内容：{firstContent == null ? row.stream ? "未记录" : "不适用" : seconds(firstContent)}</span> · <span title="从首内容到上游流结束；整包返回时无法据此推算模型生成速度。">输出阶段耗时：{row.generation_ms == null ? row.stream ? "未记录" : "不适用" : seconds(row.generation_ms)}</span></p>
-        <p className="field-hint">{row.started_at ? "开始" : "记录"}于 {date(row.started_at || row.created_at)} · 结束于 {date(row.finished_at)}</p>
-        {row.error && <p className="form-error">{row.error}</p>}
-        {row.routing_reason && <p className="field-hint">选路说明：{row.routing_reason}{row.retry_at && ` · 预计重试于 ${date(row.retry_at)}`}</p>}
-        {row.finish_reason === "stop" && <p className="field-hint">上游结束原因：{requestEndLabel(row.finish_reason, row.incomplete_reason)}</p>}
-        {row.cost_warning && <p className="field-hint">计价说明：{row.cost_warning}</p>}
+      {expired && <p className="field-hint" role="status">请求已移出内存缓存或服务已重启，已停止自动刷新。{row && "以下保留最后读取的快照，无法确认此后的请求结果。"}</p>}
+      {!row ? !error && !expired && <p role="status">正在读取请求详情…</p> : <>
+        <div className="request-detail-tools">
+          <div className="request-detail-id"><span>请求编号：<code>{row.request_id}</code></span><CopyButton text={row.request_id} label="复制请求 ID" /></div>
+          <button className="secondary" type="button" onClick={download}><Download size={15} aria-hidden="true" />{expired ? "导出已读取快照" : "导出脱敏详情"}</button>
+        </div>
+        <RequestMetrics row={row} detail />
         {payload?.attempts.length ? <section className="request-attempts"><h3>上游尝试</h3><ol>{payload.attempts.map((attempt, index) => <li key={index}>
           <div><strong>{attempt.channel_name || `渠道 #${attempt.channel_id}`}</strong><code>{attempt.model}</code><small>{protocolNames[attempt.protocol] || attempt.protocol}</small></div>
           <span>{attemptStatusLabel(attempt.status, attempt.upstream_status)}{attempt.status > 0 && ` · ${seconds(attempt.duration_ms)}`}</span>
-          {attempt.upstream_request_id && <p className="field-hint">上游请求 ID：<code style={{ overflowWrap: "anywhere" }}>{attempt.upstream_request_id}</code></p>}
+          {attempt.upstream_request_id && <div className="request-detail-id field-hint"><span>上游请求 ID：<code>{attempt.upstream_request_id}</code></span><CopyButton text={attempt.upstream_request_id} label={`复制第 ${index + 1} 次上游请求 ID`} /></div>}
           {attempt.error && <p className="form-error">{attempt.error}</p>}
           {attempt.reason && <p className="field-hint">{attempt.reason}</p>}
           {attempt.finish_reason && <p className="field-hint">上游结束原因：{requestEndLabel(attempt.finish_reason, attempt.incomplete_reason)}</p>}
         </li>)}</ol></section> : null}
         {!payload?.available ? <p className="field-hint">本次请求未记录正文。</p> : <>
-          {active(row) && <p className="field-hint" role="status">请求正在进行，每 2 秒更新。Token 和费用以实际返回的用量为准。</p>}
+          {active(row) && !expired && <p className="field-hint" role="status">请求正在进行，每 2 秒更新。Token 和费用以实际返回的用量为准。</p>}
           <div className="request-body-columns">
             <JsonBody title="请求内容" text={payload.request_body} truncated={payload.request_truncated} placeholder="请求体尚未读取或未通过校验。" />
             <JsonBody title="响应内容" text={payload.response_body} truncated={payload.response_truncated} stream={row.stream} placeholder={active(row) ? "等待上游响应…" : "未收到响应内容。"} />

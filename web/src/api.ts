@@ -18,7 +18,7 @@ export async function api<T>(
     window.dispatchEvent(new Event("session-expired"));
   if (!response.ok) {
     const result = await response.json().catch(() => ({}));
-    throw new Error(result.error?.message || `请求失败（${response.status}）`);
+    throw Object.assign(new Error(result.error?.message || `请求失败（${response.status}）`), { status: response.status });
   }
   return response.status === 204 ? (undefined as T) : response.json();
 }

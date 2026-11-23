@@ -6,3 +6,43 @@
 .provider-icon img[hidden] {
   display: none;
 }
+.account-logo-retry {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.account-logo-retry:hover { background: var(--surface-alt); }
+.account-logo-editor { margin-bottom: 22px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
+.account-logo-editor-heading { display: flex; align-items: center; gap: 12px; }
+.account-logo-editor-heading button { margin-left: auto; }
+.account-logo-editor h3 { margin: 0; font-size: 13px; }
+.account-logo-editor-controls { margin-top: 12px; }
+.account-logo-editor p { margin: 6px 0; font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; }
+.account-logo-dropzone { display: grid; gap: 8px; padding: 12px; margin-bottom: 12px; border: 1px dashed var(--border-strong); border-radius: 8px; }
+.account-logo-dropzone label { font-size: 12px; }
+.account-logo-dropzone input { max-width: 100%; min-width: 0; }
+.account-logo-dropzone small { font-size: 10px; color: var(--text-muted); line-height: 1.6; }
+.account-logo-editor .inline-actions { flex-wrap: wrap; }
+.account-logo-fetch { margin-bottom: 12px; }
+.account-logo-url { margin-bottom: 14px; }
+.account-logo-url label { display: block; margin-bottom: 8px; font-size: 12px; }
+.account-logo-url-row { display: flex; align-items: center; gap: 8px; }
+.account-logo-url-row input { flex: 1; min-width: 0; }
+.account-logo-url-row button { flex-shrink: 0; }
+@media (max-width: 480px) {
+  .account-logo-url-row { flex-direction: column; align-items: stretch; }
+}
+.account-logo-results { margin-bottom: 14px; }
+.account-logo-candidates { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; margin: 10px 0 12px; }
+.account-logo-candidates .account-logo-candidate { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 10px 6px; border: 1px solid var(--border); }
+.account-logo-candidate[aria-pressed="true"] { outline: 2px solid var(--info); outline-offset: -2px; background: var(--info-soft); }
+.account-logo-candidate-image { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 8px; background: var(--surface-alt); }
+.account-logo-candidate img { object-fit: contain; }
+.account-logo-candidate strong { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; }
+.account-logo-candidate small { display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; color: var(--text-muted); }

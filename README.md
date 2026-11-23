@@ -25,7 +25,7 @@
   <tr>
     <td width="50%" valign="top">
       <h3>01 · 账户与告警</h3>
-      <p>接入 NewAPI / Sub2API，集中查看余额、消费、倍率与订阅。支持自动登录与续期，以及余额、采集异常和订阅提醒。</p>
+      <p>接入 NewAPI / Sub2API，集中查看余额、消费、倍率与订阅。支持本地保存网站图标、自动登录与续期，以及余额、采集异常和订阅提醒。</p>
     </td>
     <td width="50%" valign="top">
       <h3>02 · 渠道与路由</h3>
@@ -39,7 +39,7 @@
     </td>
     <td width="50%" valign="top">
       <h3>04 · 请求与费用</h3>
-      <p>查看进行中请求、近期响应与上游尝试，统计 Token、缓存命中和费用估算。用量趋势与渠道、模型表现持久化保存。</p>
+      <p>查看进行中请求、近期响应与上游尝试，复制请求 ID、导出脱敏详情，统计 Token、缓存命中和费用估算。用量趋势与渠道、模型表现持久化保存。</p>
     </td>
   </tr>
 </table>
@@ -55,7 +55,7 @@
 ```yaml
 services:
   ledgergate:
-    image: ghcr.io/sectsnow/ledgergate:0.1.6
+    image: ghcr.io/sectsnow/ledgergate:0.1.7
     restart: unless-stopped
     ports:
       - "8081:8080"

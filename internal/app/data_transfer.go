@@ -31,7 +31,8 @@ type transferCredentials struct {
 
 type transferAccount struct {
 	Account
-	Credentials transferCredentials `json:"credentials"`
+	Credentials transferCredentials  `json:"credentials"`
+	Icon        *transferAccountIcon `json:"icon,omitempty"`
 }
 
 type transferChannel struct {
@@ -216,7 +217,16 @@ func (a *App) exportData(c *gin.Context) {
 				return err
 			}
 			for _, account := range accounts {
-				doc.Accounts = append(doc.Accounts, transferAccount{Account: account})
+				row := transferAccount{Account: account}
+				var icon accountIconRecord
+				if err := tx.Where("account_id = ?", account.ID).Find(&icon).Error; err != nil {
+					return err
+				}
+				if len(icon.Body) > 0 && (icon.Manual || icon.Origin == accountIconOrigin(account.BaseURL)) {
+					row.Icon = &transferAccountIcon{Body: icon.Body, Manual: icon.Manual}
+					doc.Version = 2
+				}
+				doc.Accounts = append(doc.Accounts, row)
 			}
 		}
 		if slices.Contains(sections, "keys") {

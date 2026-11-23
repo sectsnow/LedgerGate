@@ -34,7 +34,7 @@ LEDGERGATE_PORT=18080 docker compose up -d
 
 工作流有两个入口：
 
-- 推送与 `web/package.json` 一致的 SemVer 版本标签，例如 `v0.1.6`，生成 `0.1.6`、`latest` 和 `sha-完整提交SHA` 镜像标签。预发布标签如 `v0.1.6-rc.1` 生成对应版本和 SHA 标签，不更新 `latest`。
+- 推送与 `web/package.json` 一致的 SemVer 版本标签，例如 `v0.1.7`，生成 `0.1.7`、`latest` 和 `sha-完整提交SHA` 镜像标签。预发布标签如 `v0.1.7-rc.1` 生成对应版本和 SHA 标签，不更新 `latest`。
 - 在 Actions 中手动运行“发布 GHCR 镜像”。选择 `main` 分支时只生成 `sha-完整提交SHA`，适合首次候选构建，不更新 `latest`。
 
 发布前先执行前端测试、类型检查与生产构建及 Go 全量测试，再构建 `linux/amd64` 镜像。在运行器的临时目录准备绑定目录，检查主进程 UID/GID 为 0、有效能力仅包含 `DAC_OVERRIDE` 和 `FOWNER`、健康状态、嵌入的前端资源和首次设置密码；停止后将数据所有者改为旧镜像使用的 UID/GID 10001，再强制重建，确认原密钥不变、原密码仍可登录，通过后才上传镜像。此检查使用临时空数据，不调用真实上游，也不替代实际账户采集、转发和备份恢复验收。
@@ -46,7 +46,7 @@ LedgerGate 的 GHCR 镜像包已公开，拉取镜像无需登录；源码仓库
 在仓库根目录的 `.env` 文件中指定已发布的镜像，例如：
 
 ```dotenv
-LEDGERGATE_IMAGE=ghcr.io/sectsnow/ledgergate:0.1.6
+LEDGERGATE_IMAGE=ghcr.io/sectsnow/ledgergate:0.1.7
 ```
 
 然后拉取并运行，复用同一份 Compose 的端口、数据卷和安全配置：

@@ -15,9 +15,9 @@ function Metric({ icon, label, value, title, tone = "traffic" }: { icon: ReactNo
   return <span className="request-metric" title={title} data-tone={tone}><span className="request-metric-icon">{icon}</span><span><small>{label}</small><strong>{value}</strong></span></span>;
 }
 
-function CostDetails({ row }: { row: RequestLog }) {
+function CostDetails({ row, pending }: { row: RequestLog; pending: boolean }) {
   const detail = row.cost_detail;
-  if (!detail) return <div className="request-log-footer"><span>{row.metrics_version ? "本次尚无可核算的价格或用量。" : "旧记录未保存计价明细，保留当时的费用估算。"}</span>{row.finished_at && <time dateTime={row.finished_at}>完成于 {date(row.finished_at)}</time>}</div>;
+  if (!detail) return <div className="request-log-footer"><span>{pending ? "请求进行中，费用尚未确定。" : row.metrics_version ? "本次尚无可核算的价格或用量。" : "旧记录未保存计价明细，保留当时的费用估算。"}</span>{row.finished_at && <time dateTime={row.finished_at}>完成于 {date(row.finished_at)}</time>}</div>;
   const read = Math.min(Math.max(row.cache_read_tokens, 0), Math.max(row.input_tokens, 0));
   const write = Math.min(Math.max(row.cache_write_tokens, 0), Math.max(row.input_tokens - read, 0));
   const write1h = Math.min(Math.max(row.cache_write_1h_tokens, 0), write);
@@ -54,21 +54,23 @@ function CostDetails({ row }: { row: RequestLog }) {
   );
 }
 
-export default function RequestMetrics({ row, channel, small = false, children }: { row: RequestLog; channel?: ChannelRow; small?: boolean; children?: ReactNode }) {
+export default function RequestMetrics({ row, channel, small = false, detail = false, children }: { row: RequestLog; channel?: ChannelRow; small?: boolean; detail?: boolean; children?: ReactNode }) {
+  const pending = row.state === "running" || row.state === "streaming";
   const modern = row.metrics_version > 0;
   const known = modern && row.usage_recorded && !row.usage_warning;
-  const missing = modern ? "未提供" : "未记录";
-  const input = known || !modern ? exact(row.input_tokens) : "未提供";
-  const output = known || !modern ? exact(row.output_tokens) : "未提供";
+  const missing = pending && !row.usage_warning ? "等待用量" : modern ? "未提供" : "未记录";
+  const input = known || !modern ? exact(row.input_tokens) : missing;
+  const output = known || !modern ? exact(row.output_tokens) : missing;
   const timing = requestTiming(row);
-  const first = timing.firstWordMS == null ? row.stream ? "未记录" : "不适用" : duration(timing.firstWordMS);
+  const timingValue = (ms: number | null | undefined, waiting: string) => ms == null ? pending ? waiting : "未记录" : duration(ms);
+  const first = timing.firstWordMS == null && !row.stream ? "不适用" : timingValue(timing.firstWordMS, "等待输出");
   const tps = known ? averageOutputTPS(row.output_tokens, row.duration_ms) : null;
   const hit = known && row.cache_read_recorded && row.input_tokens > 0 ? Math.min(row.cache_read_tokens, row.input_tokens) / row.input_tokens * 100 : null;
   const channelName = row.channel_name || channel?.channel.name || (row.channel_id ? `渠道 #${row.channel_id}` : "未选择渠道");
   const channelLabel = row.account_name ? `${row.account_name} / ${channelName}` : channelName;
-  const showRouting = row.routing_reason && !["按优先级选择可用成员", "按权重分配到此成员", "使用手动选定的成员", "备用亲和期内继续使用当前成员"].includes(row.routing_reason);
+  const showRouting = row.routing_reason && (detail || !["按优先级选择可用成员", "按权重分配到此成员", "使用手动选定的成员", "备用亲和期内继续使用当前成员"].includes(row.routing_reason));
   const status = row.state === "interrupted" ? "已中断" : row.status === 0 && row.retry_at ? "等待重试" : row.state === "streaming" ? timing.firstContentMS == null ? "已接收响应" : "输出中" : row.status === 0 ? "进行中" : row.status === 499 ? "已取消" : row.status < 400 ? "成功" : "失败";
-  const cost = row.cost_status === "unknown" || modern && !known && row.cost_detail?.mode !== "request" ? "待核算" : money(row.cost_micros);
+  const cost = row.cost_status === "unknown" || modern && !known && row.cost_detail?.mode !== "request" ? pending ? "等待核算" : "待核算" : money(row.cost_micros);
   return (
     <article className={`request-log-card${small ? " request-log-compact" : ""}`} aria-label={`${row.model || "无模型"} 请求 ${row.request_id}`}>
       <div className="request-log-heading">
@@ -97,13 +99,18 @@ export default function RequestMetrics({ row, channel, small = false, children }
         {!small && <Metric tone="balance" icon={<Percent size={16} />} label="缓存命中率" value={hit == null ? missing : `${hit.toFixed(2)}%`} title="缓存读取 Token ÷ 输入总 Token。" />}
         {!small && <Metric tone="balance" icon={<HardDriveUpload size={16} />} label="缓存写入" value={known && row.cache_write_recorded ? exact(row.cache_write_tokens) : missing} title="仅显示上游明确返回的缓存写入数量；未提供不代表 0，也不影响未缓存输入的计算。" />}
         {!small && <Metric tone="balance" icon={<FileOutput size={16} />} label="输出总量" value={output} title={row.reasoning_tokens == null ? "上游返回的输出 Token 总量。" : `包含 ${exact(row.reasoning_tokens)} 个推理 Token，不重复计费。`} />}
-        <Metric icon={<Gauge size={16} />} label="平均 TPS" value={tps == null ? "未记录" : `${tps.toLocaleString("en-US", { maximumFractionDigits: 2 })} t/s`} title="输出 Token 总数 ÷ 完整请求耗时，包含排队、思考、网络及重试等待；适用于流式和非流式，不代表模型纯生成速度。" />
+        <Metric icon={<Gauge size={16} />} label="平均 TPS" value={tps == null ? pending && !row.usage_warning ? "等待用量" : "未记录" : `${tps.toLocaleString("en-US", { maximumFractionDigits: 2 })} t/s`} title="输出 Token 总数 ÷ 完整请求耗时，包含排队、思考、网络及重试等待；适用于流式和非流式，不代表模型纯生成速度。" />
         <Metric tone="cost" icon={<Coins size={16} />} label={modern ? "费用估算" : "历史估算"} value={cost} title={row.cost_warning || undefined} />
       </div>
+      {detail && <dl className="request-detail-timings">
+        <div><dt>首字节耗时</dt><dd>{timingValue(row.first_byte_ms, "等待响应")}</dd></div>
+        <div title="从收到请求到收到首段正文、公开思考文本或工具内容；加密思考不等同于可见内容。"><dt>首内容</dt><dd>{timing.firstContentMS == null && !row.stream ? "不适用" : timingValue(timing.firstContentMS, "等待输出")}</dd></div>
+        <div title="从首内容到上游流结束；整包返回时无法据此推算模型生成速度。"><dt>输出阶段耗时</dt><dd>{row.generation_ms == null && !row.stream ? "不适用" : timingValue(row.generation_ms, "等待结束")}</dd></div>
+      </dl>}
       {(row.error || row.cost_warning || row.usage_warning) && <p className="request-log-warning" role="status"><CircleAlert size={15} />{[row.error, row.cost_warning, row.usage_warning].filter((item, index, values) => item && values.indexOf(item) === index).join("；")}</p>}
       {showRouting && <p className="request-log-note">选路说明：{row.routing_reason}{row.retry_at && ` · 预计重试于 ${date(row.retry_at)}`}</p>}
-      {row.finish_reason && row.finish_reason !== "stop" && <p className="request-log-note">上游结束原因：{requestEndLabel(row.finish_reason, row.incomplete_reason)}</p>}
-      {!small && <CostDetails row={row} />}
+      {row.finish_reason && (detail || row.finish_reason !== "stop") && <p className="request-log-note">上游结束原因：{requestEndLabel(row.finish_reason, row.incomplete_reason)}</p>}
+      {!small && <CostDetails row={row} pending={pending} />}
     </article>
   );
 }

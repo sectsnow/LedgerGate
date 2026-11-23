@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
-	"io"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	"image/png"
 	"net/http"
 	"net/url"
 	"strings"
@@ -15,6 +18,7 @@ import (
 )
 
 const accountIconLimit = 512 << 10
+const accountIconDownloadLimit = 4 << 20
 
 type accountIconCache struct {
 	origin  string
@@ -35,25 +39,51 @@ func (a *App) accountIcon(c *gin.Context) {
 		c.Status(http.StatusNotFound)
 		return
 	}
-	base, err := url.Parse(account.BaseURL)
-	if err != nil || base.User != nil || base.Hostname() == "" || (base.Scheme != "http" && base.Scheme != "https") {
+	origin := accountIconOrigin(account.BaseURL)
+	if origin == "" {
 		c.Status(http.StatusNotFound)
 		return
 	}
-	origin := (&url.URL{Scheme: base.Scheme, Host: base.Host, Path: "/"}).String()
-	client, err := a.httpClient(account.UseProxy)
+	stored, err := a.storedAccountIcon(account)
 	if err != nil {
-		c.Status(http.StatusNotFound)
+		fail(c, 500, "读取网站图标失败")
 		return
 	}
-	body, typeOf := a.cachedAccountIcon(c.Request.Context(), id, origin, client)
+	body, typeOf := stored.Body, stored.TypeOf
+	if len(body) == 0 {
+		client, err := a.httpClient(account.UseProxy)
+		if err != nil {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		if c.Query("refresh") == "1" {
+			a.mu.Lock()
+			if cached := a.accountIcons[id]; cached != nil && cached.ready == nil && len(cached.body) == 0 {
+				cached.expires = time.Time{}
+			}
+			a.mu.Unlock()
+		}
+		body, typeOf = a.cachedAccountIcon(c.Request.Context(), id, origin, client)
+		if len(body) > 0 {
+			if err := a.saveAutomaticAccountIcon(account, body, typeOf); err != nil {
+				fail(c, 500, "保存网站图标失败")
+				return
+			}
+			stored, err = a.storedAccountIcon(account)
+			if err != nil {
+				fail(c, 500, "读取网站图标失败")
+				return
+			}
+			body, typeOf = stored.Body, stored.TypeOf
+		}
+	}
 	c.Header("Vary", "Cookie")
 	if len(body) == 0 {
-		c.Header("Cache-Control", "private, max-age=3600")
+		c.Header("Cache-Control", "no-store")
 		c.Status(http.StatusNotFound)
 		return
 	}
-	c.Header("Cache-Control", "private, max-age=86400")
+	c.Header("Cache-Control", "private, no-cache")
 	// 上游 SVG 仅作为图片显示，直接打开也不能执行脚本或加载外部资源。
 	c.Header("Content-Security-Policy", "sandbox; default-src 'none'; style-src 'unsafe-inline'")
 	c.Data(http.StatusOK, typeOf, body)
@@ -118,7 +148,7 @@ func sameIconOrigin(a, b *url.URL) bool {
 	return b.User == nil && strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Host, b.Host)
 }
 
-func declaredAccountIcons(raw []byte, base *url.URL) []string {
+func declaredAccountIcons(raw []byte, base *url.URL, includeExternal bool) []string {
 	icons, touchIcons, logos := []string{}, []string{}, []string{}
 	tokens := html.NewTokenizer(bytes.NewReader(raw))
 	for {
@@ -148,7 +178,7 @@ func declaredAccountIcons(raw []byte, base *url.URL) []string {
 				continue
 			}
 			resolved := base.ResolveReference(parsed)
-			if !sameIconOrigin(base, resolved) {
+			if resolved.User != nil || resolved.Hostname() == "" || (resolved.Scheme != "http" && resolved.Scheme != "https") || !includeExternal && !sameIconOrigin(base, resolved) {
 				continue
 			}
 			if token.Data == "img" {
@@ -192,53 +222,85 @@ func accountIconType(raw []byte) string {
 	}
 }
 
+func prepareAccountIcon(raw []byte) ([]byte, string) {
+	typeOf := accountIconType(raw)
+	if typeOf == "" || len(raw) > accountIconDownloadLimit {
+		return nil, ""
+	}
+	if len(raw) <= accountIconLimit && typeOf != "image/png" && typeOf != "image/jpeg" && typeOf != "image/gif" {
+		return raw, typeOf
+	}
+	config, _, err := image.DecodeConfig(bytes.NewReader(raw))
+	if err != nil || config.Width <= 0 || config.Height <= 0 || config.Width > (8<<20)/config.Height {
+		return nil, ""
+	}
+	source, _, err := image.Decode(bytes.NewReader(raw))
+	if err != nil {
+		return nil, ""
+	}
+	if len(raw) <= accountIconLimit {
+		return raw, typeOf
+	}
+	width, height := config.Width, config.Height
+	if width > 128 || height > 128 {
+		if width >= height {
+			height, width = max(1, height*128/width), 128
+		} else {
+			width, height = max(1, width*128/height), 128
+		}
+	}
+	thumbnail := image.NewNRGBA(image.Rect(0, 0, width, height))
+	bounds := source.Bounds()
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			thumbnail.Set(x, y, source.At(bounds.Min.X+x*config.Width/width, bounds.Min.Y+y*config.Height/height))
+		}
+	}
+	var output bytes.Buffer
+	if png.Encode(&output, thumbnail) != nil || output.Len() > accountIconLimit {
+		return nil, ""
+	}
+	return output.Bytes(), "image/png"
+}
+
 func (a *App) fetchAccountIcon(parent context.Context, origin string, selected *http.Client) ([]byte, string) {
+	icons := a.fetchAccountIconCandidates(parent, origin, selected, false)
+	if len(icons) > 0 {
+		return icons[0].Body, icons[0].TypeOf
+	}
+	return nil, ""
+}
+
+func (a *App) fetchAccountIconCandidates(parent context.Context, origin string, selected *http.Client, includeExternal bool) []accountIconCandidate {
 	ctx, cancel := context.WithTimeout(parent, 8*time.Second)
 	defer cancel()
 	base, _ := url.Parse(origin)
-	client := &http.Client{Transport: selected.Transport, CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 4 || !sameIconOrigin(base, req.URL) {
-			return http.ErrUseLastResponse
-		}
-		return nil
-	}}
-	read := func(target string) ([]byte, *url.URL) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
-		if err != nil {
-			return nil, nil
-		}
-		req.Header.Set("User-Agent", "LedgerGate/0.1")
-		response, err := client.Do(req)
-		if err != nil {
-			return nil, nil
-		}
-		defer response.Body.Close()
-		if response.StatusCode != http.StatusOK {
-			return nil, nil
-		}
-		raw, err := io.ReadAll(io.LimitReader(response.Body, accountIconLimit+1))
-		if err != nil || len(raw) > accountIconLimit {
-			return nil, nil
-		}
-		return raw, response.Request.URL
-	}
 	icons := []string{}
-	if raw, page := read(origin); page != nil {
-		icons = declaredAccountIcons(raw, page)
+	if raw, page := readAccountIconResource(ctx, origin, base, selected, accountIconLimit, false); page != nil {
+		icons = declaredAccountIcons(raw, page, includeExternal)
 	}
 	icons = append(icons, base.ResolveReference(&url.URL{Path: "/favicon.ico"}).String())
 	seen := map[string]bool{}
+	contents := map[string]bool{}
+	result := []accountIconCandidate{}
 	for _, target := range icons {
 		if seen[target] {
 			continue
 		}
 		seen[target] = true
-		raw, _ := read(target)
+		raw, _ := readAccountIconResource(ctx, target, base, selected, accountIconDownloadLimit, includeExternal)
 		if len(raw) > 0 {
-			if typeOf := accountIconType(raw); typeOf != "" {
-				return raw, typeOf
+			if body, typeOf := prepareAccountIcon(raw); typeOf != "" {
+				hash := digest(string(body))
+				if !contents[hash] {
+					result = append(result, accountIconCandidate{URL: target, Body: body, TypeOf: typeOf})
+					contents[hash] = true
+				}
+				if !includeExternal {
+					return result
+				}
 			}
 		}
 	}
-	return nil, ""
+	return result
 }

@@ -48,6 +48,7 @@ func transferRevision(tx *gorm.DB) (string, error) {
 	}
 	var setting Setting
 	var notifications []NotificationChannel
+	var icons []accountIconRecord
 	for _, query := range []*gorm.DB{
 		tx.Model(&Account{}).Select("id,name,kind,base_url,username,user_id,revision").Order("id").Find(&accounts),
 		tx.Order("id").Find(&channels),
@@ -55,6 +56,7 @@ func transferRevision(tx *gorm.DB) (string, error) {
 		tx.Model(&APIKey{}).Select("id,digest").Order("id").Find(&keys),
 		tx.First(&setting, 1),
 		tx.Order("id").Find(&notifications),
+		tx.Select("account_id,origin,manual,updated_at").Order("account_id").Find(&icons),
 	} {
 		if query.Error != nil {
 			return "", errors.New("读取当前配置失败")
@@ -64,7 +66,7 @@ func transferRevision(tx *gorm.DB) (string, error) {
 	for _, row := range notifications {
 		secrets = append(secrets, []string{row.URL, row.Secret, row.Token, row.SendKey, row.SMTPPassword})
 	}
-	return digest(jsonString(object{"accounts": accounts, "channels": channels, "groups": groups, "keys": keys, "setting": setting, "notifications": notifications, "channel_secrets": digest(jsonString(secrets)), "notification_secrets": digest(setting.WebhookSecret + setting.TelegramToken), "proxy_config": digest(setting.ProxyURL + strconv.FormatBool(setting.ProxyEnabled))})), nil
+	return digest(jsonString(object{"accounts": accounts, "icons": icons, "channels": channels, "groups": groups, "keys": keys, "setting": setting, "notifications": notifications, "channel_secrets": digest(jsonString(secrets)), "notification_secrets": digest(setting.WebhookSecret + setting.TelegramToken), "proxy_config": digest(setting.ProxyURL + strconv.FormatBool(setting.ProxyEnabled))})), nil
 }
 
 func (a *App) previewDataImport(c *gin.Context) { a.processDataImport(c, false) }
@@ -110,6 +112,9 @@ func (a *App) processDataImport(c *gin.Context, apply bool) {
 	}
 	result := transferPreview{ExportedAt: doc.ExportedAt, IncludeCredentials: doc.IncludeCredentials, Sections: doc.counts(), Selected: selected,
 		Warnings: []string{"已有账户和渠道按身份匹配后跳过，已有同名统一模型和相同网关密钥跳过。", "新导入的账户、渠道和网关密钥默认停用；自动报价需重新同步。"}}
+	if slices.Contains(selected, "accounts") {
+		result.Warnings = append(result.Warnings, "账户图标随账号迁移；已有账户仅补齐缺失图标，保留本地已保存的图标。")
+	}
 	if !doc.IncludeCredentials {
 		result.Warnings = append(result.Warnings, "文件不含访问凭据，新账户和渠道需补填凭据；通知机器人地址和密钥也需重新配置。")
 	}
@@ -159,6 +164,9 @@ func (a *App) mergeTransfer(tx *gorm.DB, doc transferDocument, selected []string
 			var existing Account
 			err := tx.Where("name=? AND kind=? AND base_url=? AND username=? AND user_id=?", source.Name, source.Kind, source.BaseURL, source.Username, source.UserID).Order("id").First(&existing).Error
 			if err == nil {
+				if err := importAccountIcon(tx, existing, source.Icon); err != nil {
+					return err
+				}
 				accountIDs[source.ID] = existing.ID
 				count("accounts", false)
 				continue
@@ -174,6 +182,9 @@ func (a *App) mergeTransfer(tx *gorm.DB, doc transferDocument, selected []string
 			value.NextCheckAt = time.Now()
 			if err := tx.Create(&value).Error; err != nil {
 				return errors.New("导入账户失败，全部变更已回滚")
+			}
+			if err := importAccountIcon(tx, value, source.Icon); err != nil {
+				return err
 			}
 			accountIDs[source.ID] = value.ID
 			count("accounts", true)

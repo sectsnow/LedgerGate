@@ -115,7 +115,7 @@ func transferPreviewForTest(t *testing.T, h http.Handler, cookie string, raw []b
 func transferDBState(t *testing.T, a *App) string {
 	t.Helper()
 	state := object{}
-	for _, table := range []string{"accounts", "channels", "groups", "routes", "api_keys", "settings", "notification_channels", "notification_deliveries", "sqlite_sequence"} {
+	for _, table := range []string{"accounts", "account_icon_records", "channels", "groups", "routes", "api_keys", "settings", "notification_channels", "notification_deliveries", "sqlite_sequence"} {
 		var rows []map[string]any
 		if err := a.DB.Table(table).Order("1").Find(&rows).Error; err != nil {
 			t.Fatal(err)

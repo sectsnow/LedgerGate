@@ -84,8 +84,8 @@
 }
 .request-metric { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .request-metric-icon { display: inline-flex; flex-shrink: 0; padding: 4px; border-radius: 7px; color: var(--tone); }
-.request-metric small { display: block; font-size: 9px; color: var(--text-muted); margin-bottom: 4px; }
-.request-metric strong { font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.request-metric small { display: block; font-size: 10px; color: var(--text-muted); margin-bottom: 4px; }
+.request-metric strong { font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .request-metric:last-child .request-metric-icon { background: var(--tone-soft); }
 .request-metric:last-child strong { color: var(--tone); font-weight: 650; }
 .request-log-warning { display: flex; align-items: flex-start; gap: 6px; color: var(--warning); font-size: 11px; line-height: 1.7; margin-top: 14px; overflow-wrap: anywhere; }
@@ -103,6 +103,16 @@
 .request-fee-total { display: flex; flex-wrap: wrap; gap: 10px 22px; margin-top: 15px; font-size: 11px; }
 .request-log-note { font-size: 10px; line-height: 1.8; color: var(--text-muted); margin-top: 12px; overflow-wrap: anywhere; }
 .request-log-footer { border-top: 1px solid var(--border); padding-top: 10px; justify-content: space-between; }
+.request-detail-tools, .request-detail-id { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; min-width: 0; }
+.request-detail-tools { justify-content: space-between; margin-bottom: 16px; font-size: 12px; }
+.request-detail-id code { overflow-wrap: anywhere; }
+.request-detail-id > code, .request-detail-id > span { min-width: 0; }
+.request-detail-id .copy-button { font-size: 11px; }
+.request-detail-timings { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0 0; padding-top: 14px; border-top: 1px solid var(--border); }
+.request-detail-timings dt { color: var(--text-muted); font-size: 10px; }
+.request-detail-timings dd { margin: 5px 0 0; font-size: 12px; font-variant-numeric: tabular-nums; }
+.request-detail .request-attempts { margin-top: 22px; }
+.request-detail .request-body-columns { margin-top: 18px; }
 .request-log-compact { padding: 13px; }
 .request-log-compact .request-log-symbol { display: none; }
 .request-log-compact .request-log-chain { gap: 5px; }
