@@ -42,6 +42,7 @@ export default function ChannelModelEditor({ models, change, disabled }: {
           aria-label="搜索渠道模型"
           placeholder="搜索模型"
           value={search}
+          onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault(); }}
           onChange={(event) => setSearch(event.target.value)}
         />
         <span>{visible.length} / {models.length} 个模型 · 已选 {selected.length}</span>

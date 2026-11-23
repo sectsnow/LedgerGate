@@ -137,7 +137,8 @@ func (a *App) notificationPayload(channel NotificationChannel, alert Alert) (str
 			u.RawQuery, address = query.Encode(), ""
 			address = u.String()
 		}
-		raw, err := json.Marshal(object{"msgtype": "text", "text": object{"content": notificationText(text, 20000)}})
+		title, markdown := dingtalkMarkdown(alert, channel.Secret == "")
+		raw, err := json.Marshal(object{"msgtype": "markdown", "markdown": object{"title": title, "text": markdown}})
 		return address, raw, err
 	case "serverchan":
 		key, err := a.unseal(channel.SendKey)

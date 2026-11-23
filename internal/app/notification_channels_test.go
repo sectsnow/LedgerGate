@@ -62,7 +62,8 @@ func TestNotificationAdapterPayloadsAndBusinessResults(t *testing.T) {
 					stamp := r.URL.Query().Get("timestamp")
 					mac := hmac.New(sha256.New, []byte("signing-secret"))
 					mac.Write([]byte(stamp + "\nsigning-secret"))
-					if body["msgtype"] != "text" || stamp == "" || r.URL.Query().Get("sign") != base64.StdEncoding.EncodeToString(mac.Sum(nil)) || r.URL.Query().Get("key") != "private" {
+					markdown := obj(body["markdown"])
+					if body["msgtype"] != "markdown" || !strings.Contains(str(markdown["title"]), "余额偏低") || !strings.Contains(str(markdown["text"]), "检测时间") || strings.Contains(str(markdown["text"]), "LedgerGate") || stamp == "" || r.URL.Query().Get("sign") != base64.StdEncoding.EncodeToString(mac.Sum(nil)) || r.URL.Query().Get("key") != "private" {
 						t.Error("invalid DingTalk signing or query encoding")
 					}
 				case "telegram":

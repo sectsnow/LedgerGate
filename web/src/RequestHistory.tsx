@@ -135,7 +135,7 @@ export default function RequestHistory({ channels, dialog }: { channels: Channel
       <button className="secondary" type="button" disabled={loading} onClick={() => setVersion(value => value + 1)}><RefreshCw size={14} />刷新请求记录</button>
     </div>
     {error && <p className="form-error" role="alert">{error}</p>}
-    <div className="panel">
+    <div className="panel request-history-panel">
       <div className="panel-heading"><div><h2 className="icon-heading"><FileText size={18} aria-hidden="true" />近期请求</h2><p>已结束请求及正文最多缓存 50 条、32 MiB，进行中请求另计。重启后清空，历史用量统计继续保留。</p></div><span>共 {count(data?.total)} 条 · 进行中 {count(data?.active)} 条</span></div>
       <RequestList rows={data?.items || []} channels={channels} dialog={dialog} />
       <div className="request-pagination">

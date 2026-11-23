@@ -20,12 +20,14 @@ export default function AdminPasswordPanel() {
   const [status, setStatus] = useState<{ environment_managed: boolean } | null>(null);
   const [current, setCurrent] = useState(""), [password, setPassword] = useState(""), [confirmation, setConfirmation] = useState("");
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
+  const [reload, setReload] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
+    setError("");
     api<{ environment_managed: boolean }>("/admin/password", "GET", undefined, controller.signal)
       .then(setStatus).catch(error => { if (!controller.signal.aborted) setError(error.message); });
     return () => controller.abort();
-  }, []);
+  }, [reload]);
   return <section className="panel admin-password-panel">
     <div className="panel-heading"><div><h2>更改管理员密码</h2><p>密码为 8–72 字节，区分大小写。更改后所有管理员登录失效，需要使用新密码重新登录。</p></div><KeyRound size={19} aria-hidden="true" /></div>
     {status?.environment_managed ? <p className="admin-password-managed">管理员密码由启动环境变量 LEDGERGATE_ADMIN_PASSWORD 管理，请在部署配置中更改；移除该变量并重启后可在这里修改。</p> : <form className="admin-password-form" onSubmit={async event => {
@@ -51,5 +53,6 @@ export default function AdminPasswordPanel() {
       <div className="admin-password-actions"><button type="submit" className="primary" disabled={busy || !status}>{busy ? "正在更改…" : "更改密码并重新登录"}</button></div>
     </form>}
     {error && <p className="admin-password-error form-error" role="alert">{error}</p>}
+    {!status && error && <div className="admin-password-actions"><button type="button" className="secondary" onClick={() => setReload(value => value + 1)}>重新加载</button></div>}
   </section>;
 }

@@ -1,5 +1,6 @@
 import { useId, useState, type ComponentType, type ReactNode } from "react";
 import { Archive, ArchiveRestore, Download, LoaderCircle, Upload } from "lucide-react";
+import { backupPasswordError } from "./backupPasswordError";
 import "./data-transfer.css";
 
 type DialogComponent = ComponentType<{ title: string; children: ReactNode; close: () => void }>;
@@ -37,9 +38,13 @@ export default function BackupPanel({ dialog: Dialog }: { dialog: DialogComponen
   }
   return <section className="panel backup-panel"><div className="panel-heading"><div><h2 className="icon-heading"><Archive size={18} aria-hidden="true" />备份与恢复</h2><p>下载加密备份，包含配置、用量统计、解密主密钥与管理员密码。内存中的近期请求及正文不随备份保存。</p></div></div>
     <form className="backup-controls" onSubmit={async event => {
-      event.preventDefault(); setBusy(true); setError("");
+      event.preventDefault();
+      const invalid = backupPasswordError(password);
+      if (invalid) { setError(invalid); return; }
+      setBusy(true); setError("");
       try {
         const response = await fetch("/api/backup", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-LedgerGate-Request": "1" }, body: JSON.stringify({ password }) });
+        if (response.status === 401) window.dispatchEvent(new Event("session-expired"));
         if (!response.ok) { const result = await response.json().catch(() => ({})); throw new Error(result.error?.message || "备份失败"); }
         const blob = await response.blob();
         const url = URL.createObjectURL(blob), link = document.createElement("a");
@@ -48,15 +53,15 @@ export default function BackupPanel({ dialog: Dialog }: { dialog: DialogComponen
       } catch (error) { setError((error as Error).message); }
       finally { setBusy(false); }
     }}>
-      <div className="field"><label htmlFor={id}>备份密码</label><input id={id} type="password" autoComplete="new-password" required minLength={12} maxLength={256} disabled={busy || restoring} value={password} onChange={event => setPassword(event.target.value)} /><small>至少 12 字节。恢复时需要此密码，请自行保存。</small></div>
+      <div className="field"><label htmlFor={id}>备份密码</label><input id={id} type="password" autoComplete="new-password" required maxLength={256} disabled={busy || restoring} value={password} onChange={event => setPassword(event.target.value)} /><small>12–256 字节。恢复时需要此密码，请自行保存。</small></div>
       <button className="secondary" disabled={busy || restoring}>{busy ? <LoaderCircle size={15} className="spin" aria-hidden="true" /> : <Download size={15} aria-hidden="true" />}{busy ? "正在创建…" : "下载加密备份"}</button>
       {error && <p className="form-error" role="alert">{error}</p>}
     </form>
     <details className="backup-help"><summary><span className="icon-label"><ArchiveRestore size={15} aria-hidden="true" />恢复备份</span></summary>
       <form className="backup-restore" onSubmit={event => {
         event.preventDefault(); setRestoreError("");
-        const bytes = new TextEncoder().encode(restorePassword).length;
-        if (bytes < 12 || bytes > 256) { setRestoreError("备份密码须为 12–256 字节。"); return; }
+        const invalid = backupPasswordError(restorePassword);
+        if (invalid) { setRestoreError(invalid); return; }
         setConfirming(true);
       }}>
         <p>选择或拖入不超过 4 GiB 的 .lgb 完整备份，输入创建备份时的密码。校验通过后替换当前数据，恢复前会保留原数据，成功后需要重新登录。旧版备份中的请求明细会先归档，再转换为用量统计。</p>

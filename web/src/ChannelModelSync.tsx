@@ -101,7 +101,7 @@ export default function ChannelModelSync({ channels, busy, setBusy, close, saved
         已有模型默认保留，新增模型请按需勾选；上游未返回的已有模型仍保留，可取消勾选后移除。确认后保存所选模型及本次检查结果，已有路由保留。未选择模型的渠道会跳过。
       </p>
       <div className="list-toolbar model-sync-toolbar">
-        <div className="search"><Search size={16} /><input aria-label="搜索可同步模型" placeholder="搜索模型名称" value={search} disabled={busy} onChange={event => setSearch(event.target.value)} /></div>
+        <div className="search"><Search size={16} /><input aria-label="搜索可同步模型" placeholder="搜索模型名称" value={search} disabled={busy} onChange={event => setSearch(event.target.value)} onKeyDown={event => { if (event.key === "Enter") event.preventDefault(); }} /></div>
         <button className="text-button" type="button" disabled={busy || loading} onClick={() => setRows(current => current.map(row => row.status === "ready" ? { ...row, selected: new Set() } : row))}>清空选择</button>
         <button className="icon-button" type="button" aria-label="重新获取可同步模型" disabled={busy || loading} onClick={() => setAttempt(value => value + 1)}><RefreshCw size={16} /></button>
       </div>

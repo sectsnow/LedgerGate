@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import { ArrowLeftRight, Download, FileSearch, Upload } from "lucide-react";
 import { api } from "./api";
+import { backupPasswordError } from "./backupPasswordError";
 import "./data-transfer.css";
 
 type Section = "accounts" | "channels" | "models" | "keys" | "settings";
@@ -38,6 +39,7 @@ export default function DataTransferPanel({ changed }: { changed: (settingsImpor
   const id = useId();
   const [tab, setTab] = useState<"export" | "import">("export");
   const [catalog, setCatalog] = useState<Count[]>([]);
+  const [reload, setReload] = useState(0);
   const [selected, setSelected] = useState<Section[]>(["accounts", "channels", "models"]);
   const [includeCredentials, setIncludeCredentials] = useState(true);
   const [exportPassword, setExportPassword] = useState("");
@@ -49,9 +51,10 @@ export default function DataTransferPanel({ changed }: { changed: (settingsImpor
   const [busy, setBusy] = useState(false), [error, setError] = useState(""), [message, setMessage] = useState("");
   useEffect(() => {
     const controller = new AbortController();
+    setError("");
     api<{ sections: Count[] }>("/data-transfer", "GET", undefined, controller.signal).then(result => setCatalog(result.sections)).catch(error => { if (!controller.signal.aborted) setError(error.message); });
     return () => controller.abort();
-  }, []);
+  }, [reload]);
   const clearPreview = () => { setManifest(null); setPlan(null); setImportSelected(null); setMessage(""); };
   function chooseFile(next: File | null) {
     clearPreview(); setError(""); setFile(null);
@@ -60,6 +63,8 @@ export default function DataTransferPanel({ changed }: { changed: (settingsImpor
   }
   async function readFile(path: "preview" | "import") {
     if (!file) throw new Error("请选择数据包。");
+    const invalid = backupPasswordError(importPassword);
+    if (invalid) throw new Error(invalid);
     const body = new FormData(); body.append("file", file); body.append("password", importPassword);
     if (importSelected !== null) body.append("sections", JSON.stringify(effectiveSections(importSelected)));
     if (path === "import" && plan?.token) body.append("token", plan.token);
@@ -73,7 +78,10 @@ export default function DataTransferPanel({ changed }: { changed: (settingsImpor
     <div className="panel-heading"><div><h2 className="icon-heading"><ArrowLeftRight size={18} aria-hidden="true" />数据导入与导出</h2><p>按需迁移配置。消费、请求记录和监控历史通过完整备份恢复。</p></div></div>
     <div className="transfer-tabs" role="group" aria-label="数据迁移方式">{([["export", "导出数据", Download], ["import", "导入数据", Upload]] as const).map(([value, title, Icon]) => <button type="button" className="secondary" key={value} aria-pressed={tab === value} disabled={busy} onClick={() => { setTab(value); setError(""); setMessage(""); }}><Icon size={15} />{title}</button>)}</div>
     {tab === "export" ? <form className="transfer-form" onSubmit={async event => {
-      event.preventDefault(); setBusy(true); setError(""); setMessage("");
+      event.preventDefault();
+      const invalid = backupPasswordError(exportPassword);
+      if (invalid) { setError(invalid); return; }
+      setBusy(true); setError(""); setMessage("");
       try {
         const response = await fetch("/api/data-transfer/export", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-LedgerGate-Request": "1" }, body: JSON.stringify({ sections: selected, password: exportPassword, include_credentials: includeCredentials }) });
         if (response.status === 401) window.dispatchEvent(new Event("session-expired"));
@@ -87,7 +95,7 @@ export default function DataTransferPanel({ changed }: { changed: (settingsImpor
       <fieldset className="transfer-fieldset"><legend>选择导出内容</legend><Categories rows={catalog} selected={selected} disabled={busy} change={setSelected} /></fieldset>
       <p className="transfer-hint">导出模型会带上关联渠道，渠道会带上关联账户；系统设置也会带上通知筛选引用的账户。仅自动补充实际引用的记录。</p>
       <label className="checkbox"><input type="checkbox" checked={includeCredentials} disabled={busy} onChange={event => setIncludeCredentials(event.target.checked)} />包含访问凭据（账户密码、Token、渠道及网关 Key、通知密钥）</label>
-      <div className="transfer-actions"><div className="field"><label htmlFor={`${id}-export-password`}>导出密码</label><input id={`${id}-export-password`} type="password" autoComplete="new-password" required minLength={12} maxLength={256} value={exportPassword} disabled={busy} onChange={event => setExportPassword(event.target.value)} /><small>12–256 字节，用于加密 .lgd 配置包，不包含管理员密码或主密钥。</small></div><button type="submit" className="primary" disabled={busy || selected.length === 0 || catalog.length === 0}><Download size={15} />{busy ? "正在导出…" : "导出所选内容"}</button></div>
+      <div className="transfer-actions"><div className="field"><label htmlFor={`${id}-export-password`}>导出密码</label><input id={`${id}-export-password`} type="password" autoComplete="new-password" required maxLength={256} value={exportPassword} disabled={busy} onChange={event => setExportPassword(event.target.value)} /><small>12–256 字节，用于加密 .lgd 配置包，不包含管理员密码或主密钥。</small></div><button type="submit" className="primary" disabled={busy || selected.length === 0 || catalog.length === 0}><Download size={15} />{busy ? "正在导出…" : "导出所选内容"}</button></div>
     </form> : <form className="transfer-form" onSubmit={async event => {
       event.preventDefault(); setBusy(true); setError(""); setMessage(""); setPlan(null);
       try {
@@ -96,7 +104,7 @@ export default function DataTransferPanel({ changed }: { changed: (settingsImpor
       } catch (error) { setError((error as Error).message); } finally { setBusy(false); }
     }}>
       <div className="transfer-dropzone" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); if (!busy) chooseFile(event.dataTransfer.files[0] || null); }}><label htmlFor={`${id}-file`}>选择或拖入 .lgd 配置包</label><input id={`${id}-file`} type="file" accept=".lgd" disabled={busy} onChange={event => chooseFile(event.target.files?.[0] || null)} />{file && <p>{file.name} · {(file.size / 1024).toFixed(1)} KiB</p>}</div>
-      <div className="field"><label htmlFor={`${id}-import-password`}>数据包密码</label><input id={`${id}-import-password`} type="password" autoComplete="off" required minLength={12} maxLength={256} disabled={busy} value={importPassword} onChange={event => { setImportPassword(event.target.value); clearPreview(); }} /></div>
+      <div className="field"><label htmlFor={`${id}-import-password`}>数据包密码</label><input id={`${id}-import-password`} type="password" autoComplete="off" required maxLength={256} disabled={busy} value={importPassword} onChange={event => { setImportPassword(event.target.value); clearPreview(); }} /></div>
       {manifest && <><p className="transfer-hint">导出于 {new Date(manifest.exported_at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false })} · {manifest.include_credentials ? "包含访问凭据" : "不含访问凭据"}</p><fieldset className="transfer-fieldset"><legend>选择导入内容</legend><Categories rows={manifest.sections} selected={importSelected || []} disabled={busy} change={value => { setImportSelected(value); setPlan(null); }} /></fieldset></>}
       {plan && <div className="transfer-preview"><h3>导入预览</h3><div className="table-scroll"><table><thead><tr><th>类别</th><th>新增</th><th>跳过</th><th>替换</th></tr></thead><tbody>{plan.sections.filter(row => plan.selected.includes(row.id)).map(row => <tr key={row.id}><td>{row.label}</td><td>{row.created}</td><td>{row.skipped}</td><td>{row.updated}</td></tr>)}</tbody></table></div>{plan.warnings.map(warning => <p className="transfer-hint" key={warning}>{warning}</p>)}</div>}
       <div className="transfer-import-actions"><button type="submit" className="secondary" disabled={busy || !file || importSelected !== null && importSelected.length === 0}><FileSearch size={15} aria-hidden="true" />{busy ? "正在处理…" : manifest ? "更新导入预览" : "预览导入"}</button><button type="button" className="primary" disabled={busy || !plan?.token} onClick={async () => {
@@ -111,5 +119,6 @@ export default function DataTransferPanel({ changed }: { changed: (settingsImpor
       }}><Upload size={15} />确认导入</button></div>
     </form>}
     {error && <p className="transfer-feedback form-error" role="alert">{error}</p>}{message && <p className="transfer-feedback" role="status">{message}</p>}
+    {error && !catalog.length && <button type="button" className="secondary transfer-feedback" onClick={() => setReload(value => value + 1)}>重新加载</button>}
   </section>;
 }
