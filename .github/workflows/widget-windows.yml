@@ -1,0 +1,59 @@
+name: 构建 Windows 桌面小部件
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+    paths:
+      - "widget/**"
+      - "web/package.json"
+      - ".github/workflows/widget-windows.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: widget
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - name: 安装依赖
+        run: corepack pnpm install --frozen-lockfile
+      - name: 核对版本标签
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $version = (Get-Content "../web/package.json" -Raw | ConvertFrom-Json).version
+          if ($env:GITHUB_REF_NAME -ne "v$version") { throw "版本标签与 web/package.json 不一致" }
+      - name: 检查界面数据
+        run: corepack pnpm test
+      - name: 检查连接和凭证
+        run: cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --locked
+      - name: 构建 Windows 程序
+        run: corepack pnpm tauri build --ci -- --locked
+      - name: 核对构建产物
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "src-tauri/target/release/LedgerGateWidget.exe")) { throw "缺少可执行文件" }
+          $installer = @(Get-ChildItem "src-tauri/target/release/bundle/nsis/*-setup.exe" -ErrorAction SilentlyContinue)
+          if ($installer.Count -ne 1) { throw "缺少安装包或找到多个安装包" }
+          Copy-Item $installer[0].FullName "src-tauri/target/release/LedgerGateWidget-Setup-x64.exe"
+      - name: 上传 Windows 构建产物
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: LedgerGate-Widget-Windows-x64
+          path: |
+            widget/src-tauri/target/release/LedgerGateWidget.exe
+            widget/src-tauri/target/release/LedgerGateWidget-Setup-x64.exe
+          if-no-files-found: error
+          retention-days: 14

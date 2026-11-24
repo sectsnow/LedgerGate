@@ -39,7 +39,8 @@ textarea {
   -webkit-tap-highlight-color: transparent;
 }
 button,
-.account-home-link {
+.account-home-link,
+.widget-download {
   display: inline-flex;
   align-items: center;
   justify-content: center;

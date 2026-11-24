@@ -139,7 +139,7 @@ func open(config Config) (*App, error) {
 		return nil, err
 	}
 	keyUsageExisted := db.Migrator().HasColumn(&APIKey{}, "used_micros")
-	if err = db.AutoMigrate(&Account{}, &accountIconRecord{}, &Channel{}, &Group{}, &Route{}, &APIKey{}, &Snapshot{}, &RequestLog{}, &RequestDetail{}, &RequestDay{}, &RequestHour{}, &Alert{}, &AlertState{}, &Session{}, &Setting{}, &channelCreation{}, &SyncTask{}, &NotificationChannel{}, &NotificationDelivery{}); err != nil {
+	if err = db.AutoMigrate(&Account{}, &accountIconRecord{}, &Channel{}, &Group{}, &Route{}, &APIKey{}, &Snapshot{}, &RequestLog{}, &RequestDetail{}, &RequestDay{}, &RequestHour{}, &Alert{}, &AlertState{}, &Session{}, &Setting{}, &widgetCredential{}, &channelCreation{}, &SyncTask{}, &NotificationChannel{}, &NotificationDelivery{}); err != nil {
 		return nil, err
 	}
 	if !keyUsageExisted {

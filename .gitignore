@@ -3,6 +3,10 @@
 /web/node_modules/
 /web/dist/
 /web/static/app/
+/widget/node_modules/
+/widget/dist/
+/widget/src-tauri/target/
+/widget/src-tauri/gen/
 /.env
 *.db*
 *.log

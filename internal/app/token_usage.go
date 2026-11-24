@@ -16,12 +16,12 @@ func (result *completion) applyUsage(body object, protocol string) {
 	}
 	regular := max(result.Input-result.CacheRead-result.CacheWrite, 0)
 	if input, ok := usage[inputField]; ok {
-		result.UsageSeen = true
+		result.UsageSeen, result.InputSeen = true, true
 		result.Input = usageCount(input)
 		regular = result.Input
 	}
 	if output, ok := usage[outputField]; ok {
-		result.UsageSeen = true
+		result.UsageSeen, result.OutputSeen = true, true
 		result.Output = usageCount(output)
 	}
 	if protocol == "anthropic" {

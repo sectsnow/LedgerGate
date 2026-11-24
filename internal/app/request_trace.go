@@ -203,7 +203,7 @@ func (t *requestTrace) payload() requestPayload {
 	return payload
 }
 
-func (a *App) finishRequestTrace(t *requestTrace, log *RequestLog) {
+func (a *App) finishRequestTrace(t *requestTrace, log *RequestLog) error {
 	now := time.Now()
 	log.DurationMS, log.FinishedAt = now.Sub(log.CreatedAt).Milliseconds(), &now
 	log.State = "completed"
@@ -232,6 +232,7 @@ func (a *App) finishRequestTrace(t *requestTrace, log *RequestLog) {
 	delete(a.activeRequests, log.ID)
 	a.cacheFinishedRequest(*log, payload)
 	a.mu.Unlock()
+	return err
 }
 
 type requestCaptureWriter struct {

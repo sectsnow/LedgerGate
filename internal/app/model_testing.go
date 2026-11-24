@@ -29,19 +29,23 @@ type modelTestInput struct {
 }
 
 type modelTestResult struct {
-	Success        bool   `json:"success"`
-	Status         int    `json:"status"`
-	DurationMS     int64  `json:"duration_ms"`
-	FirstTokenMS   *int64 `json:"first_token_ms"`
-	FirstContentMS *int64 `json:"first_content_ms"`
-	GenerationMS   *int64 `json:"generation_ms"`
-	InputTokens    *int64 `json:"input_tokens"`
-	OutputTokens   *int64 `json:"output_tokens"`
-	CacheRead      *int64 `json:"cache_read_tokens"`
-	CacheWrite     *int64 `json:"cache_write_tokens"`
-	UsageWarning   string `json:"usage_warning"`
-	Text           string `json:"text"`
-	Error          string `json:"error"`
+	Success         bool   `json:"success"`
+	Status          int    `json:"status"`
+	DurationMS      int64  `json:"duration_ms"`
+	FirstTokenMS    *int64 `json:"first_token_ms"`
+	FirstContentMS  *int64 `json:"first_content_ms"`
+	GenerationMS    *int64 `json:"generation_ms"`
+	InputTokens     *int64 `json:"input_tokens"`
+	OutputTokens    *int64 `json:"output_tokens"`
+	CacheRead       *int64 `json:"cache_read_tokens"`
+	CacheWrite      *int64 `json:"cache_write_tokens"`
+	CostMicros      int64  `json:"cost_micros"`
+	CostStatus      string `json:"cost_status"`
+	CostWarning     string `json:"cost_warning"`
+	TrackingWarning string `json:"tracking_warning"`
+	UsageWarning    string `json:"usage_warning"`
+	Text            string `json:"text"`
+	Error           string `json:"error"`
 }
 
 type modelTestModels struct {
@@ -116,6 +120,27 @@ func (a *App) modelTestKey(c *gin.Context, channel Channel, input modelTestInput
 		return "", false
 	}
 	return key, true
+}
+
+func (a *App) modelTestRoute(channel Channel, input modelTestInput) (Group, Route, string) {
+	if input.APIKey != "" || input.KeyChannelID != 0 && input.KeyChannelID != channel.ID {
+		return Group{}, Route{}, "所选 Key 没有对应的本地计价"
+	}
+	var routes []Route
+	if err := a.DB.Where("channel_id = ? AND model = ?", channel.ID, input.Model).Limit(2).Find(&routes).Error; err != nil {
+		return Group{}, Route{}, "读取模型计价失败"
+	}
+	if len(routes) == 0 {
+		return Group{}, Route{}, "模型未配置本地计价"
+	}
+	if len(routes) > 1 {
+		return Group{}, Route{}, "模型对应多个路由，无法确定计价"
+	}
+	var group Group
+	if err := a.DB.First(&group, routes[0].GroupID).Error; err != nil {
+		return Group{}, Route{}, "读取模型计价失败"
+	}
+	return group, routes[0], ""
 }
 
 func (a *App) channelTestModels(c *gin.Context) {
@@ -209,7 +234,21 @@ func (a *App) testChannelModel(c *gin.Context) {
 	timing := requestTimings{Started: started}
 	result := modelTestResult{}
 	usage := completion{}
+	responseComplete := false
+	group, route, priceWarning := a.modelTestRoute(channel, input)
+	keyName := "模型测试"
+	if input.APIKey != "" {
+		keyName += " · 临时 Key"
+	} else if input.KeyChannelID != 0 && input.KeyChannelID != channel.ID {
+		keyName += fmt.Sprintf(" · 渠道 #%d Key", input.KeyChannelID)
+	}
+	log := RequestLog{RequestID: "test_" + randomToken()[:20], KeyName: keyName, ChannelID: channel.ID, ChannelName: channel.Name, Model: input.Model, Protocol: input.Protocol, UpstreamModel: input.Model, UpstreamProtocol: input.Protocol, Stream: input.Stream, Attempts: 1, Status: 502, CreatedAt: started, StartedAt: &started, MetricsVersion: 2, CostStatus: "unknown"}
+	routeRate := a.recordRequestRoute(&log, Route{Model: input.Model}, channel, input.Protocol)
+	var trace *requestTrace
 	defer func() {
+		if usage.UsageSeen && (!usage.InputSeen || !usage.OutputSeen) && usage.UsageWarning == "" {
+			usage.UsageWarning = "上游未返回完整的输入和输出 Token 用量"
+		}
 		result.DurationMS = time.Since(started).Milliseconds()
 		if !timing.First.IsZero() {
 			result.FirstTokenMS = intPointer(timing.First.Sub(started).Milliseconds())
@@ -230,6 +269,39 @@ func (a *App) testChannelModel(c *gin.Context) {
 		result.UsageWarning = usage.UsageWarning
 		result.Text = modelTestPreview(result.Text, key, 16384)
 		result.Error = modelTestPreview(result.Error, key, 1024)
+		if trace != nil {
+			log.Status = result.Status
+			if log.Status < 200 || log.Status < 400 && !result.Success {
+				log.Status = 502
+			}
+			if !result.Success && c.Request.Context().Err() != nil {
+				log.Status = 499
+			}
+			log.Error = result.Error
+			timing.Finished = time.Now()
+			timing.apply(&log)
+			if priceWarning == "" && responseComplete {
+				a.recordRequestCost(&log, usage, group, route, channel, routeRate)
+			} else {
+				usage.recordLogUsage(&log)
+				log.CostStatus, log.CostWarning = "unknown", priceWarning
+				if !responseComplete && result.Status >= 200 && result.Status < 300 {
+					log.CostWarning = "上游响应未完整结束，用量可能不完整"
+				} else if log.CostWarning == "" {
+					log.CostWarning = "上游未返回可核算费用"
+				}
+				if usage.UsageWarning != "" {
+					log.CostWarning = usage.UsageWarning
+				}
+			}
+			result.CostMicros, result.CostStatus, result.CostWarning = log.CostMicros, log.CostStatus, log.CostWarning
+			usage.Finish = modelTestPreview(usage.Finish, key, 512)
+			usage.IncompleteReason = modelTestPreview(usage.IncompleteReason, key, 512)
+			trace.attemptOutcome(usage)
+			if a.finishRequestTrace(trace, &log) != nil {
+				result.TrackingWarning = "测试统计保存失败，请检查服务日志"
+			}
+		}
 		c.JSON(200, result)
 	}()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint(channel.BaseURL, requestPath(input.Protocol)), bytes.NewBufferString(jsonString(body)))
@@ -242,6 +314,9 @@ func (a *App) testChannelModel(c *gin.Context) {
 	if input.Stream {
 		req.Header.Set("Accept", "text/event-stream")
 	}
+	trace = a.beginRequestTrace(&log)
+	a.traceAttempt(trace, log)
+	trace.setRequest(log, object{"model": input.Model, "stream": input.Stream, "note": "模型测试正文未记录"})
 	// 单次请求，不使用网关重试，也不改变渠道的启用或冷却状态。
 	resp, err := a.doRequest(req, channel.UseProxy)
 	if err != nil {
@@ -249,6 +324,7 @@ func (a *App) testChannelModel(c *gin.Context) {
 		return
 	}
 	defer resp.Body.Close()
+	trace.attemptResponse(&http.Response{StatusCode: resp.StatusCode, Header: http.Header{"X-Request-Id": []string{modelTestPreview(upstreamRequestID(resp.Header), key, 512)}}})
 	result.Status = resp.StatusCode
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
@@ -270,6 +346,7 @@ func (a *App) testChannelModel(c *gin.Context) {
 				return
 			}
 			_, done, inspectErr := inspectEvent(event, input.Protocol, &usage, false)
+			trace.usage(usage)
 			if inspectErr != nil {
 				result.Error = inspectErr.Error()
 				if detail := modelTestUpstreamError([]byte(event.Data)); detail != "" {
@@ -277,7 +354,9 @@ func (a *App) testChannelModel(c *gin.Context) {
 				}
 				return
 			}
-			timing.observe(event, input.Protocol, received)
+			if timing.observe(event, input.Protocol, received) {
+				trace.recordTimings(timing)
+			}
 			if value, decodeErr := decodeJSON([]byte(event.Data)); decodeErr == nil {
 				text := modelTestText(obj(value), input.Protocol, true)
 				if len(result.Text) < 16384 {
@@ -285,6 +364,7 @@ func (a *App) testChannelModel(c *gin.Context) {
 				}
 			}
 			if done {
+				responseComplete = true
 				break
 			}
 		}
@@ -312,6 +392,7 @@ func (a *App) testChannelModel(c *gin.Context) {
 			result.Error = err.Error()
 			return
 		}
+		responseComplete = true
 		usage.applyUsage(response, input.Protocol)
 		result.Text = modelTestText(response, input.Protocol, false)
 		if strings.TrimSpace(result.Text) == "" {

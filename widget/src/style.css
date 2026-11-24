@@ -1,0 +1,65 @@
+:root {
+  font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  color: #1f242b;
+  background: #fff;
+  font-synthesis: none;
+  --surface: #fff;
+  --soft: #f5f7fa;
+  --text: #1f242b;
+  --muted: #59636f;
+  --border: #e1e7ef;
+  --accent: #1f60c4;
+  --danger: #b22e3e;
+}
+@media (prefers-color-scheme: dark) {
+  :root { color-scheme: dark; --surface: #181b1f; --soft: #22262d; --text: #f3f4f6; --muted: #b0bac6; --border: #3d4550; --accent: #91b7ff; --danger: #ff98a5; }
+}
+* { box-sizing: border-box; }
+html, body, #root { margin: 0; width: 100%; height: 100%; }
+body { overflow: hidden; background: var(--surface); color: var(--text); }
+button, input { font: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: default; opacity: .55; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.widget { height: 100%; display: flex; flex-direction: column; border: 1px solid var(--border); background: var(--surface); }
+.titlebar { height: 51px; min-height: 51px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px 0 16px; border-bottom: 1px solid var(--border); user-select: none; }
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; }
+.brand img { width: 25px; height: 25px; }
+.actions { display: flex; gap: 2px; }
+.actions button, .refresh { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); }
+.actions button:hover, .refresh:hover { background: var(--soft); color: var(--text); }
+.actions button.active { color: var(--accent); }
+.content, .settings { min-height: 0; flex: 1; padding: 16px 18px; overflow: auto; }
+.content { display: flex; flex-direction: column; gap: 14px; }
+.heading { display: flex; justify-content: space-between; align-items: center; }
+h1, p { margin: 0; }
+h1 { font-size: 17px; font-weight: 650; }
+.heading p, .settings p { margin-top: 5px; font-size: 12px; color: var(--muted); }
+.finance { min-height: 65px; max-height: 142px; overflow: auto; }
+.finance-head, .finance-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; }
+.finance-head, .metrics span { color: var(--muted); font-size: 12px; }
+.finance-row { padding: 7px 0; border-bottom: 1px solid var(--border); }
+.finance-row:last-child { border-bottom: 0; }
+.finance-row strong, .metrics strong { display: block; font-size: 18px; font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.finance-row small, .metrics small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
+.finance-row p { grid-column: 1 / -1; color: var(--muted); font-size: 11px; }
+.empty { padding: 12px 0; color: var(--muted); font-size: 13px; }
+.metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.metrics > div { min-width: 0; padding: 10px 11px; border-radius: 8px; background: var(--soft); }
+.metrics strong { margin-top: 5px; }
+.bottom { margin-top: auto; display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; }
+.hint, .error { font-size: 11px; line-height: 1.5; }
+.hint { color: var(--muted); }
+.error, .settings .error { color: var(--danger); }
+.open { flex-shrink: 0; display: flex; align-items: center; gap: 3px; padding: 0; border: 0; background: transparent; color: var(--accent); font-size: 12px; }
+.settings { display: flex; flex-direction: column; gap: 13px; }
+.settings label { display: grid; gap: 5px; color: var(--text); font-size: 12px; }
+.settings input { width: 100%; padding: 9px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text); font-size: 13px; }
+.settings .hint { margin: 0; }
+.settings-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; }
+.primary, .secondary { padding: 8px 12px; border-radius: 7px; font-size: 12px; }
+.primary { border: 1px solid #1f60c4; background: #1f60c4; color: white; }
+.secondary { border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } }

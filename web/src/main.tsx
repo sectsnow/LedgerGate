@@ -95,6 +95,7 @@ import RequestQuality from "./RequestQuality";
 import RequestTrend from "./RequestTrend";
 import BackupPanel from "./BackupPanel";
 import ProxySettings from "./ProxySettings";
+import WidgetCredentialPanel from "./WidgetCredentialPanel";
 import NotificationPanel from "./NotificationPanel";
 import KeyModelPicker from "./KeyModelPicker";
 import DataTransferPanel from "./DataTransferPanel";
@@ -862,7 +863,7 @@ function App() {
                 <MonitorHistory key={current.id} mode={current.id as "alerts" | "rate-changes" | "announcements"} accounts={data.accounts} revision={data} dialog={Dialog} />
               )}
               {current.id === "settings" && (
-                <><BuildInfoPanel build={data.build} frontend={version} /><ThemePicker value={theme} change={setTheme} /><AdminPasswordPanel /><ProxySettings key={settingsRevision} /><NotificationPanel key={`notifications-${settingsRevision}`} accounts={data.accounts} defaultRetries={data.settings.runtime.notification_retries} dialog={Dialog} field={Field} /><SettingsForm key={settingsRevision} settings={data.settings} run={run} /><DataTransferPanel changed={async settingsImported => { await refresh(); if (settingsImported) setSettingsRevision(value => value + 1); }} /><BackupPanel dialog={Dialog} /></>
+                <><BuildInfoPanel build={data.build} frontend={version} /><ThemePicker value={theme} change={setTheme} /><AdminPasswordPanel /><WidgetCredentialPanel key={`widget-${settingsRevision}`} /><ProxySettings key={settingsRevision} /><NotificationPanel key={`notifications-${settingsRevision}`} accounts={data.accounts} defaultRetries={data.settings.runtime.notification_retries} dialog={Dialog} field={Field} /><SettingsForm key={settingsRevision} settings={data.settings} run={run} /><DataTransferPanel changed={async settingsImported => { await refresh(); if (settingsImported) setSettingsRevision(value => value + 1); }} /><BackupPanel dialog={Dialog} /></>
               )}
             </>
           )}
@@ -1368,8 +1369,8 @@ function RequestActivity({
   while (cells.length % 7) cells.push(null);
   const describe = (day: RequestDay) => {
     if (!day.requests) return `${day.date}：无汇总记录`;
-    const cost = (day.cost_unknown_requests || 0) >= day.requests ? "费用待核算" : `费用估算 $${((day.cost_micros || 0) / 1e6).toFixed(6)}`;
-    return `${day.date}：${day.requests.toLocaleString("zh-CN")} 次请求 · 输入 ${(day.input_tokens || 0).toLocaleString("zh-CN")} / 输出 ${(day.output_tokens || 0).toLocaleString("zh-CN")} Token · ${cost}${day.cost_unknown_requests ? ` · ${day.cost_unknown_requests} 次待核算` : ""}`;
+    const cost = (day.cost_unknown_requests || 0) >= day.requests ? "费用无法估算" : `费用估算 $${((day.cost_micros || 0) / 1e6).toFixed(6)}`;
+    return `${day.date}：${day.requests.toLocaleString("zh-CN")} 次请求 · 输入 ${(day.input_tokens || 0).toLocaleString("zh-CN")} / 输出 ${(day.output_tokens || 0).toLocaleString("zh-CN")} Token · ${cost}${day.cost_unknown_requests ? ` · ${day.cost_unknown_requests} 次费用未知，未计入估算` : ""}`;
   };
   return (
     <section className="panel request-activity">
@@ -1592,7 +1593,7 @@ function Overview({
           icon={<Coins size={18} aria-hidden="true" />}
           note={
             [totals.cost_unknown_requests
-              ? `${totals.cost_unknown_requests} 次请求待核算，未计入费用`
+              ? `${totals.cost_unknown_requests} 次费用未知，未计入估算`
               : "按模型配置单价估算",
             pending ? `${pending} 条告警等待送达或发送失败` : ""].filter(Boolean).join(" · ")
           }

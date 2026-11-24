@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -115,6 +116,13 @@ func TestModelTestingProtocolsAndKeys(t *testing.T) {
 		if result := runModelTest(t, h, cookie, channel, input); !result.Success {
 			t.Fatal(result.Error)
 		}
+		wantKeyName := "模型测试 · 临时 Key"
+		if keyInput["key_channel_id"] != nil {
+			wantKeyName = fmt.Sprintf("模型测试 · 渠道 #%d Key", alternate.ID)
+		}
+		if log := latestRequestForTest(t, a); log.KeyName != wantKeyName || log.CostStatus != "unknown" {
+			t.Fatal("selected key was not identified or used another key's price", log)
+		}
 	}
 	var saved Channel
 	if a.DB.First(&saved, channel.ID).Error != nil {
@@ -125,12 +133,200 @@ func TestModelTestingProtocolsAndKeys(t *testing.T) {
 		t.Fatal("testing mutated the channel or used a fallback")
 	}
 	logs, _ := a.requestSummaries()
-	var requests int64
-	if err := a.DB.Model(&RequestHour{}).Select("COALESCE(SUM(requests),0)").Scan(&requests).Error; err != nil {
+	var summary RequestDay
+	if err := a.DB.First(&summary).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(logs) != 0 || requests != 0 {
-		t.Fatal("tests polluted gateway request records")
+	if len(logs) != 8 || summary.Requests != 8 || summary.InputTokens != 80 || summary.OutputTokens != 40 || summary.CostUnknownRequests != 8 {
+		t.Fatalf("model test usage missing from statistics: %+v", summary)
+	}
+}
+
+func TestModelTestingCostAndRequestAccounting(t *testing.T) {
+	a := testApp(t)
+	h := a.Router()
+	cookie := loginForTest(t, h)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"OK"}}],"usage":{"prompt_tokens":1000,"completion_tokens":100,"prompt_tokens_details":{"cached_tokens":600,"cache_creation_tokens":300,"cache_creation_1h_tokens":100}}}`)
+	}))
+	defer upstream.Close()
+	channel := createChannel(t, h, cookie, "priced", upstream.URL, "openai")
+	var stored Channel
+	if err := a.DB.First(&stored, channel.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	account := Account{Name: "priced account", Status: "ok"}
+	if err := a.DB.Create(&account).Error; err != nil {
+		t.Fatal(err)
+	}
+	stored.AccountID = &account.ID
+	if err := a.DB.Model(&stored).Update("account_id", account.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	factor := 0.5
+	rates := rateSnapshot{Channels: map[uint]channelRate{stored.ID: {upstreamRate: upstreamRate{Multiplier: &factor, Group: "fixture"}, Identity: channelRateIdentity(stored)}}}
+	if err := a.DB.Model(&account).Update("rates", jsonString(rates)).Error; err != nil {
+		t.Fatal(err)
+	}
+	price := cacheTestPrice()
+	price.Reference, price.ChannelIdentity = true, pricingIdentity(stored)
+	group := Group{Name: "alias", Strategy: "priority", PriceMode: "auto", Routes: []Route{{ChannelID: stored.ID, Model: "priced-model", Weight: 1, Pricing: price}}}
+	if err := a.DB.Create(&group).Error; err != nil {
+		t.Fatal(err)
+	}
+	input := object{"model": "priced-model", "protocol": "openai", "prompt": "secret test prompt", "max_tokens": 512}
+	result := runModelTest(t, h, cookie, stored, input)
+	if !result.Success || result.CostStatus != "estimated" || result.CostMicros != 1110 || result.CostWarning != "" || result.TrackingWarning != "" {
+		t.Fatalf("priced test result incorrect: %+v", result)
+	}
+	log := latestRequestForTest(t, a)
+	if log.KeyID != 0 || log.KeyName != "模型测试" || log.AccountName != account.Name || log.ChannelID != stored.ID || log.Model != "priced-model" || log.CostMicros != 1110 || log.CostDetail == nil || !log.CostDetail.MultiplierApplied || log.CacheWrite1hTokens != 100 {
+		t.Fatalf("test request did not retain cost and identity: %+v", log)
+	}
+	_, detail, found := a.cachedRequestDetail(log.ID)
+	if !found || strings.Contains(detail.RequestBody, "secret test prompt") || len(detail.Attempts) != 1 || detail.Attempts[0].Status != 200 {
+		t.Fatalf("test request detail invalid: %+v", detail)
+	}
+	var summary RequestDay
+	if err := a.DB.First(&summary).Error; err != nil || summary.Requests != 1 || summary.CostMicros != 1110 || summary.CacheReadTokens != 600 || summary.CacheWriteTokens != 300 || summary.CostUnknownRequests != 0 {
+		t.Fatalf("priced test missing from daily statistics: %+v %v", summary, err)
+	}
+
+	input["api_key"] = "alternate-private-key"
+	result = runModelTest(t, h, cookie, stored, input)
+	if result.CostStatus != "unknown" || result.CostWarning == "" {
+		t.Fatal("temporary key used the saved key's price", result)
+	}
+	if log := latestRequestForTest(t, a); log.KeyName != "模型测试 · 临时 Key" {
+		t.Fatal("temporary key was not identified in request history", log.KeyName)
+	}
+	delete(input, "api_key")
+	second := Group{Name: "other alias", Strategy: "priority", PriceMode: "manual", Routes: []Route{{ChannelID: stored.ID, Model: "priced-model", Weight: 1}}}
+	if err := a.DB.Create(&second).Error; err != nil {
+		t.Fatal(err)
+	}
+	result = runModelTest(t, h, cookie, stored, input)
+	if result.CostStatus != "unknown" || !strings.Contains(result.CostWarning, "多个路由") {
+		t.Fatal("ambiguous routes used an arbitrary price", result)
+	}
+	if err := a.DB.First(&summary).Error; err != nil || summary.Requests != 3 || summary.CostMicros != 1110 || summary.CostUnknownRequests != 2 {
+		t.Fatalf("unknown costs were not tracked: %+v %v", summary, err)
+	}
+}
+
+func TestModelTestingIncompleteAndFailedAccounting(t *testing.T) {
+	a := testApp(t)
+	h := a.Router()
+	cookie := loginForTest(t, h)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body object
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		prompt := str(obj(array(body["messages"])[0])["content"])
+		switch prompt {
+		case "partial usage":
+			fmt.Fprint(w, `{"choices":[{"message":{"content":"OK"}}],"usage":{"prompt_tokens":10}}`)
+		case "no text":
+			fmt.Fprint(w, `{"choices":[{"message":{"content":""}}],"usage":{"prompt_tokens":10,"completion_tokens":5}}`)
+		case "partial stream":
+			fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5}}\n\n")
+		case "auth":
+			w.Header().Set("X-Request-ID", "private-upstream-key")
+			w.WriteHeader(401)
+			fmt.Fprint(w, `{"error":{"message":"invalid private-upstream-key"}}`)
+		default:
+			fmt.Fprint(w, `{"choices":[{"message":{"content":"OK"}}],"usage":{"prompt_tokens":10,"completion_tokens":5}}`)
+		}
+	}))
+	defer upstream.Close()
+	channel := createChannel(t, h, cookie, "partial", upstream.URL, "openai")
+	group := Group{Name: "partial alias", Strategy: "priority", PriceMode: "manual", InputPriceMicros: 2_000_000, OutputPriceMicros: 8_000_000, Routes: []Route{{ChannelID: channel.ID, Model: "partial-model", Weight: 1}}}
+	if err := a.DB.Create(&group).Error; err != nil {
+		t.Fatal(err)
+	}
+	input := object{"model": "partial-model", "protocol": "openai", "prompt": "partial usage", "max_tokens": 512}
+	result := runModelTest(t, h, cookie, channel, input)
+	if !result.Success || result.CostStatus != "unknown" || result.UsageWarning == "" || result.OutputTokens != nil {
+		t.Fatal("incomplete token usage was priced as complete", result)
+	}
+	input["prompt"] = "no text"
+	result = runModelTest(t, h, cookie, channel, input)
+	if result.Success || result.CostStatus != "estimated" || result.CostMicros != 60 {
+		t.Fatal("completed but failed test lost known usage cost", result)
+	}
+	input["prompt"], input["stream"] = "partial stream", true
+	result = runModelTest(t, h, cookie, channel, input)
+	if result.Success || result.CostStatus != "unknown" || !strings.Contains(result.CostWarning, "未完整结束") {
+		t.Fatal("interrupted stream was priced as complete", result)
+	}
+	input["prompt"], input["stream"] = "auth", false
+	result = runModelTest(t, h, cookie, channel, input)
+	log := latestRequestForTest(t, a)
+	_, detail, found := a.cachedRequestDetail(log.ID)
+	if result.Success || result.CostStatus != "unknown" || !found || strings.Contains(jsonString(detail), "private-upstream-key") {
+		t.Fatal("failed request exposed its key or invented a fee", result, detail)
+	}
+	if err := a.DB.Exec("CREATE TRIGGER reject_test_summary BEFORE INSERT ON request_days BEGIN SELECT RAISE(ABORT, 'fixture'); END").Error; err != nil {
+		t.Fatal(err)
+	}
+	input["prompt"] = "OK"
+	result = runModelTest(t, h, cookie, channel, input)
+	if !result.Success || result.TrackingWarning == "" {
+		t.Fatal("statistics storage failure was hidden", result)
+	}
+	var summary RequestDay
+	if err := a.DB.First(&summary).Error; err != nil || summary.Requests != 4 || summary.CostMicros != 60 || summary.CostUnknownRequests != 3 {
+		t.Fatalf("failed or incomplete requests were miscounted: %+v %v", summary, err)
+	}
+}
+
+func TestModelTestingConcurrentAccounting(t *testing.T) {
+	a := testApp(t)
+	h := a.Router()
+	cookie := loginForTest(t, h)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"OK"}}],"usage":{"prompt_tokens":10,"completion_tokens":5}}`)
+	}))
+	defer upstream.Close()
+	channel := createChannel(t, h, cookie, "concurrent", upstream.URL, "openai")
+	group := Group{Name: "concurrent alias", Strategy: "priority", PriceMode: "manual", InputPriceMicros: 2_000_000, OutputPriceMicros: 8_000_000, Routes: []Route{{ChannelID: channel.ID, Model: "concurrent-model", Weight: 1}}}
+	key := APIKey{Name: "gateway budget", Digest: "gateway-budget", UsedMicros: 7}
+	if err := a.DB.Create(&group).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := a.DB.Create(&key).Error; err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	results := make(chan modelTestResult, 10)
+	for range 10 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			w := call(h, "POST", fmt.Sprintf("/api/channels/%d/model-tests", channel.ID), `{"model":"concurrent-model","protocol":"openai","prompt":"OK?","max_tokens":512}`, cookie)
+			var result modelTestResult
+			if w.Code == 200 {
+				_ = json.Unmarshal(w.Body.Bytes(), &result)
+			}
+			results <- result
+		}()
+	}
+	wg.Wait()
+	close(results)
+	for result := range results {
+		if !result.Success || result.CostStatus != "estimated" || result.CostMicros != 60 || result.TrackingWarning != "" {
+			t.Fatal("concurrent test result incorrect", result)
+		}
+	}
+	var day RequestDay
+	var hour RequestHour
+	if err := a.DB.First(&day).Error; err != nil || day.Requests != 10 || day.CostMicros != 600 || day.InputTokens != 100 || day.OutputTokens != 50 {
+		t.Fatalf("concurrent daily totals incorrect: %+v %v", day, err)
+	}
+	if err := a.DB.First(&hour).Error; err != nil || hour.Requests != 10 || hour.CostMicros != 600 {
+		t.Fatalf("concurrent hourly totals incorrect: %+v %v", hour, err)
+	}
+	if err := a.DB.First(&key, key.ID).Error; err != nil || key.UsedMicros != 7 {
+		t.Fatal("model tests charged a gateway key budget", key, err)
 	}
 }
 
@@ -290,6 +486,14 @@ func TestModelTestingCancellation(t *testing.T) {
 	a.mu.Unlock()
 	if active != 0 {
 		t.Fatal("cancelled test did not release concurrency slot")
+	}
+	log := latestRequestForTest(t, a)
+	if log.Status != 499 || log.State != "cancelled" || log.CostStatus != "unknown" {
+		t.Fatalf("cancelled upstream request was not accounted for: %+v", log)
+	}
+	var summary RequestDay
+	if err := a.DB.First(&summary).Error; err != nil || summary.Requests != 1 || summary.CostUnknownRequests != 1 {
+		t.Fatalf("cancelled test missing from statistics: %+v %v", summary, err)
 	}
 }
 

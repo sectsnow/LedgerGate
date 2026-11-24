@@ -679,6 +679,8 @@ type completion struct {
 	CacheWrite       int64
 	CacheWrite1h     int64
 	UsageSeen        bool
+	InputSeen        bool
+	OutputSeen       bool
 	Finish           string
 	IncompleteReason string
 }

@@ -17,7 +17,10 @@ function Metric({ icon, label, value, title, tone = "traffic" }: { icon: ReactNo
 
 function CostDetails({ row, pending }: { row: RequestLog; pending: boolean }) {
   const detail = row.cost_detail;
-  if (!detail) return <div className="request-log-footer"><span>{pending ? "请求进行中，费用尚未确定。" : row.metrics_version ? "本次尚无可核算的价格或用量。" : "旧记录未保存计价明细，保留当时的费用估算。"}</span>{row.finished_at && <time dateTime={row.finished_at}>完成于 {date(row.finished_at)}</time>}</div>;
+  const usageKnown = !row.metrics_version || row.usage_recorded && !row.usage_warning;
+  const unavailable = pending ? "等待核算" : "无法估算";
+  const missingUsage = pending ? "等待用量" : "用量缺失";
+  if (!detail) return <div className="request-log-footer"><span>{pending ? "请求进行中，费用尚未确定。" : row.metrics_version ? "缺少有效用量或计价信息，无法估算费用；结束后不会自动补算，以上游账单为准。" : "旧记录未保存计价明细，保留当时的费用估算。"}</span>{row.finished_at && <time dateTime={row.finished_at}>结束于 {date(row.finished_at)}</time>}</div>;
   const read = Math.min(Math.max(row.cache_read_tokens, 0), Math.max(row.input_tokens, 0));
   const write = Math.min(Math.max(row.cache_write_tokens, 0), Math.max(row.input_tokens - read, 0));
   const write1h = Math.min(Math.max(row.cache_write_1h_tokens, 0), write);
@@ -30,7 +33,7 @@ function CostDetails({ row, pending }: { row: RequestLog; pending: boolean }) {
   ];
   return (
     <details className="request-fee-details">
-      <summary><span className="request-fee-label"><ChevronRight size={13} className="request-fee-chevron" aria-hidden="true" /><ReceiptText size={14} aria-hidden="true" />费用明细{detail.tier && <span>{detail.tier}</span>}</span>{row.finished_at && <time dateTime={row.finished_at}>完成于 {date(row.finished_at)}</time>}</summary>
+      <summary><span className="request-fee-label"><ChevronRight size={13} className="request-fee-chevron" aria-hidden="true" /><ReceiptText size={14} aria-hidden="true" />费用明细{detail.tier && <span>{detail.tier}</span>}</span>{row.finished_at && <time dateTime={row.finished_at}>结束于 {date(row.finished_at)}</time>}</summary>
       <div className="request-fee-content">
         <p className="request-log-note">{detail.source === "manual" ? "手动价格" : detail.source || "价格来源未记录"}{detail.reference ? " · 公开参考价" : ""}{detail.price_model && ` · ${detail.price_model}`}{detail.source_url && <> · <a href={detail.source_url} target="_blank" rel="noreferrer">查看来源</a></>}</p>
         {detail.mode === "token" ? (
@@ -38,16 +41,17 @@ function CostDetails({ row, pending }: { row: RequestLog; pending: boolean }) {
             {lines.map(line => {
               const fallback = line.rate == null && line.fallback && line.tokens > 0;
               const rate = fallback ? detail.rates.input : line.rate;
-              return <tr key={line.label}><td>{line.label}{fallback && <small>按普通输入价估算</small>}</td><td>{exact(line.tokens)}</td><td>{rate == null ? "未提供" : `$${(rate / 1e6).toLocaleString("en-US", { maximumFractionDigits: 6 })}`}</td><td>{line.tokens === 0 ? "$0.000000" : rate == null ? "待核算" : `$${(line.tokens * rate / 1e12).toFixed(9)}`}</td></tr>;
+              return <tr key={line.label}><td>{line.label}{fallback && <small>按普通输入价估算</small>}</td><td>{usageKnown ? exact(line.tokens) : missingUsage}</td><td>{rate == null ? "未提供" : `$${(rate / 1e6).toLocaleString("en-US", { maximumFractionDigits: 6 })}`}</td><td>{!usageKnown ? unavailable : line.tokens === 0 ? "$0.000000" : rate == null ? unavailable : `$${(line.tokens * rate / 1e12).toFixed(9)}`}</td></tr>;
             })}
           </tbody></table></div>
         ) : <p>{detail.mode === "request" ? `按次计价 · ${detail.unit_price == null ? "单价未提供" : money(detail.unit_price) + " / 次"}` : "当前用量不足以核算图片或视频费用。"}</p>}
         <div className="request-fee-total">
-          <span>{detail.rates_include_multiplier ? "单价合计（已含倍率）" : "基础估算"} <strong>{row.cost_status === "unknown" ? "待核算" : money(detail.base_cost_micros)}</strong></span>
+          <span>{detail.rates_include_multiplier ? "单价合计（已含倍率）" : "基础估算"} <strong>{row.cost_status === "unknown" ? unavailable : money(detail.base_cost_micros)}</strong></span>
           <span>渠道倍率 <strong>{detail.multiplier == null ? "未提供" : `${detail.multiplier}×`}</strong>{detail.rate_group && ` · ${detail.rate_group}`}</span>
           <span>{detail.rates_include_multiplier ? "单价已含倍率，不再重复相乘" : detail.multiplier_applied ? "已应用倍率" : detail.source === "manual" ? "手动单价，不额外乘倍率" : detail.multiplier_stale ? "倍率过期，暂用基础估算" : "未应用倍率"}</span>
-          <span>本次费用估算 <strong>{row.cost_status === "unknown" ? "待核算" : money(row.cost_micros)}</strong></span>
+          <span>本次费用估算 <strong>{row.cost_status === "unknown" ? unavailable : money(row.cost_micros)}</strong></span>
         </div>
+        {!pending && row.cost_status === "unknown" && <p className="request-log-note">{!usageKnown ? "用量缺失或无效，无法估算费用。" : "当前计价信息不足，无法估算费用。"}已结束请求不会自动补算，以上游账单为准。</p>}
         <p className="request-log-note">分项保留更多小数，总费用统一四舍五入至 6 位美元小数。{detail.note}</p>
       </div>
     </details>
@@ -70,7 +74,7 @@ export default function RequestMetrics({ row, channel, small = false, detail = f
   const channelLabel = row.account_name ? `${row.account_name} / ${channelName}` : channelName;
   const showRouting = row.routing_reason && (detail || !["按优先级选择可用成员", "按权重分配到此成员", "使用手动选定的成员", "备用亲和期内继续使用当前成员"].includes(row.routing_reason));
   const status = row.state === "interrupted" ? "已中断" : row.status === 0 && row.retry_at ? "等待重试" : row.state === "streaming" ? timing.firstContentMS == null ? "已接收响应" : "输出中" : row.status === 0 ? "进行中" : row.status === 499 ? "已取消" : row.status < 400 ? "成功" : "失败";
-  const cost = row.cost_status === "unknown" || modern && !known && row.cost_detail?.mode !== "request" ? pending ? "等待核算" : "待核算" : money(row.cost_micros);
+  const cost = row.cost_status === "unknown" || modern && !known && row.cost_detail?.mode !== "request" ? pending ? "等待核算" : "无法估算" : money(row.cost_micros);
   return (
     <article className={`request-log-card${small ? " request-log-compact" : ""}`} aria-label={`${row.model || "无模型"} 请求 ${row.request_id}`}>
       <div className="request-log-heading">
@@ -99,7 +103,7 @@ export default function RequestMetrics({ row, channel, small = false, detail = f
         {!small && <Metric tone="balance" icon={<Percent size={16} />} label="缓存命中率" value={hit == null ? missing : `${hit.toFixed(2)}%`} title="缓存读取 Token ÷ 输入总 Token。" />}
         {!small && <Metric tone="balance" icon={<HardDriveUpload size={16} />} label="缓存写入" value={known && row.cache_write_recorded ? exact(row.cache_write_tokens) : missing} title="仅显示上游明确返回的缓存写入数量；未提供不代表 0，也不影响未缓存输入的计算。" />}
         {!small && <Metric tone="balance" icon={<FileOutput size={16} />} label="输出总量" value={output} title={row.reasoning_tokens == null ? "上游返回的输出 Token 总量。" : `包含 ${exact(row.reasoning_tokens)} 个推理 Token，不重复计费。`} />}
-        <Metric icon={<Gauge size={16} />} label="平均 TPS" value={tps == null ? pending && !row.usage_warning ? "等待用量" : "未记录" : `${tps.toLocaleString("en-US", { maximumFractionDigits: 2 })} t/s`} title="输出 Token 总数 ÷ 完整请求耗时，包含排队、思考、网络及重试等待；适用于流式和非流式，不代表模型纯生成速度。" />
+        <Metric icon={<Gauge size={16} />} label="平均 TPS" value={tps == null ? pending && !row.usage_warning ? "等待用量" : "无法计算" : `${tps.toLocaleString("en-US", { maximumFractionDigits: 2 })} t/s`} title="输出 Token 总数 ÷ 完整请求耗时，包含排队、思考、网络及重试等待；缺少有效用量或耗时时无法计算。适用于流式和非流式，不代表模型纯生成速度。" />
         <Metric tone="cost" icon={<Coins size={16} />} label={modern ? "费用估算" : "历史估算"} value={cost} title={row.cost_warning || undefined} />
       </div>
       {detail && <dl className="request-detail-timings">
