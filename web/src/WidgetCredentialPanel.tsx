@@ -4,6 +4,8 @@ import { version } from "../package.json";
 import { api } from "./api";
 import CopyButton from "./CopyButton";
 
+const releaseURL = `https://github.com/sectsnow/LedgerGate/releases/download/v${version}`;
+
 export default function WidgetCredentialPanel() {
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [token, setToken] = useState("");
@@ -34,13 +36,13 @@ export default function WidgetCredentialPanel() {
   }
 
   return <section className="panel settings-panel">
-    <div className="panel-heading"><div><h2 className="icon-heading"><Monitor size={18} aria-hidden="true" />桌面小部件</h2><p>生成只读凭证，供 Windows 小部件读取余额和今日用量。</p></div></div>
-    <div className="settings-fields">
+    <div className="panel-heading"><div><h2 className="icon-heading"><Monitor size={18} aria-hidden="true" />桌面小部件</h2><p>生成只读凭证，供 Windows 小部件读取余额、用量和模型、渠道统计。</p></div></div>
+    <div className="widget-settings">
       <p className="field-hint">{configured === null ? "正在读取凭证状态…" : configured ? "已启用只读凭证。重新生成或撤销后，原凭证立即失效。" : "尚未生成只读凭证。"}</p>
       {token && <div className="field"><label htmlFor="widget-credential">小部件凭证（仅显示一次）</label><div className="inline-actions"><input id="widget-credential" value={token} readOnly autoComplete="off" /><CopyButton text={token} label="复制小部件凭证" /></div><small>请复制到小部件设置中；关闭页面后无法再次查看。</small></div>}
       {error && <p className="form-error" role="alert">{error}</p>}
-      <div className="inline-actions"><button type="button" className="secondary" disabled={busy || configured === null} onClick={() => void update(false)}>{configured ? "重新生成凭证" : "生成凭证"}</button>{configured && <button type="button" className="secondary danger" disabled={busy} onClick={() => void update(true)}>撤销凭证</button>}</div>
-      <div className="inline-actions"><a className="secondary widget-download" href={`https://github.com/sectsnow/LedgerGate/releases/download/v${version}/LedgerGateWidget-Setup-x64.exe`} target="_blank" rel="noopener noreferrer"><Download size={14} aria-hidden="true" />下载 Windows 安装包</a></div>
+      <div className="inline-actions widget-actions"><button type="button" className="secondary" disabled={busy || configured === null} onClick={() => void update(false)}>{configured ? "重新生成凭证" : "生成凭证"}</button>{configured && <button type="button" className="secondary danger" disabled={busy} onClick={() => void update(true)}>撤销凭证</button>}<a className="secondary widget-download" href={`${releaseURL}/LedgerGateWidget-Setup-x64.exe`} target="_blank" rel="noopener noreferrer"><Download size={14} aria-hidden="true" />下载 Windows 安装包</a><a className="secondary widget-download" href={`${releaseURL}/LedgerGateWidget.exe`} target="_blank" rel="noopener noreferrer"><Download size={14} aria-hidden="true" />下载 Windows 便携版</a></div>
+      <p className="field-hint">便携版无需安装，需系统已安装 WebView2 Runtime；设置保存在当前 Windows 用户目录。</p>
     </div>
   </section>;
 }

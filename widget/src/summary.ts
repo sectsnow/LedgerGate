@@ -15,6 +15,24 @@ export type Overview = {
   requests: number;
   input_tokens: number;
   output_tokens: number;
+  period?: Period | null;
+};
+
+export type Rank = { name: string; requests: number; tokens: number };
+
+export type Period = {
+  days: number;
+  retention_days: number;
+  requests: number;
+  errors: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  cost_micros: number;
+  cost_unknown_requests: number;
+  models: Rank[];
+  channels: Rank[];
 };
 
 export type Finance = {

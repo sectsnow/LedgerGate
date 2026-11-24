@@ -40,12 +40,37 @@ pub struct WidgetAccount {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct WidgetRank {
+    name: String,
+    requests: i64,
+    tokens: i64,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct WidgetPeriod {
+    days: u8,
+    retention_days: i64,
+    requests: i64,
+    errors: i64,
+    input_tokens: i64,
+    output_tokens: i64,
+    cache_read_tokens: i64,
+    cache_write_tokens: i64,
+    cost_micros: i64,
+    cost_unknown_requests: i64,
+    models: Vec<WidgetRank>,
+    channels: Vec<WidgetRank>,
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct WidgetOverview {
     date: String,
     accounts: Vec<WidgetAccount>,
     requests: i64,
     input_tokens: i64,
     output_tokens: i64,
+    #[serde(default)]
+    period: Option<WidgetPeriod>,
 }
 
 fn normalize_server(server: &str) -> Result<String, String> {
@@ -145,7 +170,10 @@ pub fn save_connection(path: &Path, server: &str, token: &str) -> Result<Connect
     })
 }
 
-pub async fn fetch_overview(connection: Connection) -> Result<WidgetOverview, String> {
+pub async fn fetch_overview(connection: Connection, days: u8) -> Result<WidgetOverview, String> {
+    if !matches!(days, 1 | 7 | 30) {
+        return Err("统计周期无效".into());
+    }
     let client = reqwest::Client::builder()
         .redirect(Policy::none())
         .timeout(Duration::from_secs(12))
@@ -153,7 +181,10 @@ pub async fn fetch_overview(connection: Connection) -> Result<WidgetOverview, St
         .build()
         .map_err(|_| "无法创建连接")?;
     let mut response = client
-        .get(format!("{}/api/widget/overview", connection.server))
+        .get(format!(
+            "{}/api/widget/overview?days={days}",
+            connection.server
+        ))
         .bearer_auth(connection.token)
         .send()
         .await
@@ -211,6 +242,17 @@ mod tests {
         }
     }
 
+    #[test]
+    fn overview_decodes_period_totals_and_rankings() {
+        let body = r#"{"date":"2026-11-24","accounts":[],"requests":1,"input_tokens":10,"output_tokens":5,"period":{"days":7,"retention_days":30,"requests":3,"errors":1,"input_tokens":100,"output_tokens":20,"cache_read_tokens":40,"cache_write_tokens":4,"cost_micros":1234,"cost_unknown_requests":1,"models":[{"name":"model-a","requests":2,"tokens":90}],"channels":[{"name":"channel-a","requests":3,"tokens":120}]}}"#;
+        let overview: WidgetOverview = serde_json::from_str(body).unwrap();
+        let period = overview.period.unwrap();
+        assert_eq!(period.days, 7);
+        assert_eq!(period.cost_unknown_requests, 1);
+        assert_eq!(period.models[0].name, "model-a");
+        assert_eq!(period.channels[0].tokens, 120);
+    }
+
     #[tokio::test]
     async fn overview_uses_only_read_only_endpoint_and_does_not_follow_redirects() {
         for status in [200, 302] {
@@ -229,7 +271,7 @@ mod tests {
                     request.extend_from_slice(&buffer[..count]);
                 }
                 let request = String::from_utf8_lossy(&request).to_lowercase();
-                assert!(request.starts_with("get /prefix/api/widget/overview "));
+                assert!(request.starts_with("get /prefix/api/widget/overview?days=7 "));
                 assert!(request.contains(&format!("authorization: bearer lgw_{}", "a".repeat(43))));
                 let body = r#"{"date":"2026-11-24","accounts":[],"requests":3,"input_tokens":100,"output_tokens":20}"#;
                 write!(socket, "HTTP/1.1 {status} test\r\nContent-Length: {}\r\nLocation: http://127.0.0.1:1/\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
@@ -238,9 +280,11 @@ mod tests {
                 server: format!("http://{addr}/prefix"),
                 token: format!("lgw_{}", "a".repeat(43)),
             };
-            let result = fetch_overview(connection).await;
+            let result = fetch_overview(connection, 7).await;
             if status == 200 {
-                assert_eq!(result.unwrap().requests, 3);
+                let overview = result.unwrap();
+                assert_eq!(overview.requests, 3);
+                assert!(overview.period.is_none());
             } else {
                 assert!(result.err().unwrap().contains("302"));
             }

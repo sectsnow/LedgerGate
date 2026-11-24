@@ -35,10 +35,10 @@ fn configure(
 }
 
 #[tauri::command]
-async fn get_overview(app: tauri::AppHandle) -> Result<WidgetOverview, String> {
+async fn get_overview(app: tauri::AppHandle, days: u8) -> Result<WidgetOverview, String> {
     let connection =
         load_connection(&settings_path(&app)?)?.ok_or("请先配置 LedgerGate 地址和只读凭证")?;
-    fetch_overview(connection).await
+    fetch_overview(connection, days).await
 }
 
 #[tauri::command]

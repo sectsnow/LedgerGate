@@ -2108,6 +2108,9 @@ dialog:has(.request-detail) { width: min(1300px, calc(100vw - 40px)); }
 .settings-panel {
   margin-bottom: 22px;
 }
+.widget-settings { display: grid; gap: 14px; padding: 0 24px 24px; }
+.widget-settings > .field-hint { margin: 0; }
+.widget-actions { flex-wrap: wrap; }
 .build-info-content {
   padding: 0 24px 22px;
 }
@@ -2426,6 +2429,8 @@ dialog:has(.request-detail) { width: min(1300px, calc(100vw - 40px)); }
     padding: 18px;
   }
   .build-info-content { padding: 0 18px 22px; }
+  .widget-settings { padding: 0 18px 18px; }
+  .widget-settings .field .inline-actions { flex-wrap: wrap; }
   .build-info-grid { grid-template-columns: minmax(0, 1fr); }
   .panel-heading h2 {
     font-size: 13px;

@@ -33,7 +33,7 @@
 
 ## Release 与完成标准
 
-- 设置页的小部件下载入口指向当前版本的 GitHub Release；发版时等待该标签的 Windows 小部件工作流成功，并将安装包以 `LedgerGateWidget-Setup-x64.exe` 的名称附到对应 Release。
+- 设置页的小部件下载入口指向当前版本的 GitHub Release；发版时等待该标签的 Windows 小部件工作流成功，并将 `LedgerGateWidget-Setup-x64.exe` 和 `LedgerGateWidget.exe` 附到对应 Release。
 - Release 使用中文说明具体的新功能、修复、兼容边界与升级注意事项；涉及数据格式、历史迁移、备份或回退限制时明确写出。
 - 只报告实际执行的验证。CI 成功、镜像可拉取、真实上游请求成功和服务器已升级是不同结果，分别描述。
 - 完成时提供版本号、源码提交、标签、镜像地址与 digest、工作流和 Release 链接，以及尚未验证的事项。
