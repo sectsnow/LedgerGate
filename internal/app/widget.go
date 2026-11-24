@@ -61,6 +61,17 @@ type widgetRank struct {
 	Tokens   int64  `json:"tokens"`
 }
 
+type widgetTrend struct {
+	Date                string `json:"date"`
+	Available           bool   `json:"available"`
+	Requests            int64  `json:"requests"`
+	Errors              int64  `json:"errors"`
+	InputTokens         int64  `json:"input_tokens"`
+	OutputTokens        int64  `json:"output_tokens"`
+	CostMicros          int64  `json:"cost_micros"`
+	CostUnknownRequests int64  `json:"cost_unknown_requests"`
+}
+
 type widgetPeriod struct {
 	Days                int          `json:"days"`
 	RetentionDays       int          `json:"retention_days"`
@@ -72,6 +83,7 @@ type widgetPeriod struct {
 	CacheWriteTokens    int64        `json:"cache_write_tokens"`
 	CostMicros          int64        `json:"cost_micros"`
 	CostUnknownRequests int64        `json:"cost_unknown_requests"`
+	Trend               []widgetTrend `json:"trend" gorm:"-"`
 	Models              []widgetRank `json:"models" gorm:"-"`
 	Channels            []widgetRank `json:"channels" gorm:"-"`
 }
@@ -128,6 +140,25 @@ func (a *App) widgetOverview(c *gin.Context) {
 			return err
 		}
 		period.Days, period.RetentionDays = days, setting.RequestSummaryRetentionDays
+		storedTrend := []widgetTrend{}
+		if err := tx.Model(&RequestDay{}).Where("date >= ? AND date <= ?", start.Format("2006-01-02"), today).
+			Select("date, requests, errors, input_tokens, output_tokens, cost_micros, cost_unknown_requests").Order("date").Scan(&storedTrend).Error; err != nil {
+			return err
+		}
+		trendByDate := make(map[string]widgetTrend, len(storedTrend))
+		for _, row := range storedTrend {
+			row.Available = true
+			trendByDate[row.Date] = row
+		}
+		period.Trend = make([]widgetTrend, 0, days)
+		for offset := days - 1; offset >= 0; offset-- {
+			date := todayStart.AddDate(0, 0, -offset).Format("2006-01-02")
+			row, ok := trendByDate[date]
+			if !ok {
+				row.Date = date
+			}
+			period.Trend = append(period.Trend, row)
+		}
 		period.Models, period.Channels = []widgetRank{}, []widgetRank{}
 		ranking := tx.Model(&RequestHour{}).Where("hour >= ? AND hour < ?", start.Unix(), todayStart.AddDate(0, 0, 1).Unix())
 		if err := ranking.Select("COALESCE(NULLIF(model,''),'未指定模型') AS name, SUM(requests) AS requests, SUM(input_tokens + output_tokens) AS tokens").

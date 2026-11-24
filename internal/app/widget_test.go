@@ -134,6 +134,9 @@ func TestWidgetPeriodTotalsAndRankings(t *testing.T) {
 	if len(week.Models) != 2 || week.Models[0].Name != "alpha" || week.Models[0].Tokens != 170 || len(week.Channels) != 2 || week.Channels[0].Name != "主渠道" || week.Channels[0].Requests != 3 {
 		t.Fatalf("unexpected weekly rankings: %+v", week)
 	}
+	if len(week.Trend) != 7 || week.Trend[0].Available || !week.Trend[5].Available || week.Trend[5].Requests != 2 || !week.Trend[6].Available || week.Trend[6].Errors != 1 {
+		t.Fatalf("unexpected weekly trend, missing dates must remain unavailable: %+v", week.Trend)
+	}
 	if current := read(""); current.Days != 1 || current.Requests != 2 || len(current.Models) != 1 {
 		t.Fatalf("unexpected daily totals: %+v", current)
 	}

@@ -76,6 +76,9 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .theme-swatch.violet { background: #76539d; }
 .content, .settings { min-height: 0; flex: 1; overflow: auto; padding: 17px 18px 18px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 h1, h2, p { margin: 0; }
+.view-tabs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 3px; margin-bottom: 15px; padding: 3px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.view-tabs button { min-width: 0; padding: 6px 8px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: 11px; }
+.view-tabs button.selected { background: var(--soft); color: var(--text); font-weight: 700; }
 .period-bar, .section-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .eyebrow, .section-title h2 { color: var(--text); font-size: 12px; font-weight: 700; }
 .period-date { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
@@ -89,11 +92,33 @@ h1, h2, p { margin: 0; }
 .quick-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: var(--border); }
 .quick-stats > div { min-width: 0; padding: 10px 11px; background: var(--surface); }
 .quick-stats strong { display: block; margin-top: 5px; color: var(--text); font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.analysis-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin-top: 15px; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: var(--border); }
+.analysis-grid > div { min-width: 0; padding: 11px; background: var(--surface); }
+.analysis-grid span { display: block; color: var(--muted); font-size: 10px; }
+.analysis-grid strong { display: block; margin-top: 5px; color: var(--text); font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.trend-grid { display: grid; gap: 10px; margin-top: 13px; }
+.trend-card { min-width: 0; padding: 10px 11px 7px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.trend-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.trend-heading strong { font-size: 11px; }
+.trend-heading span { color: var(--muted); font-size: 10px; }
+.trend-chart { display: block; width: 100%; height: 92px; margin-top: 7px; overflow: visible; color: var(--accent); }
+.trend-chart line { stroke: var(--border); stroke-width: 1; }
+.trend-chart path { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; }
+.trend-chart circle { fill: var(--surface); stroke: currentColor; stroke-width: 1.5; }
+.trend-labels { display: flex; justify-content: space-between; color: var(--muted); font-size: 9px; font-variant-numeric: tabular-nums; }
 .detail-line, .notice { margin-top: 9px; color: var(--muted); font-size: 10px; line-height: 1.6; }
 .notice { color: var(--danger); }
 .section { margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--border); }
 .section-title span { color: var(--muted); font-size: 10px; }
 .finance { max-height: 170px; overflow: auto; }
+.account-view { max-height: none; margin-top: 0; padding-top: 0; border-top: 0; }
+.alert-view { margin-top: 0; padding-top: 0; }
+.alert-list { display: grid; gap: 8px; margin-top: 13px; }
+.alert-card { padding: 10px 11px; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 9px; background: var(--surface); }
+.alert-card.warning { border-left-color: #d38a16; }
+.alert-card.danger { border-left-color: var(--danger); }
+.alert-card strong { display: block; font-size: 12px; }
+.alert-card p { margin-top: 4px; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .finance-head, .finance-row { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 12px; }
 .finance-head { padding-top: 10px; }
 .finance-row { padding: 6px 0; border-bottom: 1px solid var(--border); }

@@ -19,6 +19,16 @@ export type Overview = {
 };
 
 export type Rank = { name: string; requests: number; tokens: number };
+export type Trend = {
+  date: string;
+  available: boolean;
+  requests: number;
+  errors: number;
+  input_tokens: number;
+  output_tokens: number;
+  cost_micros: number;
+  cost_unknown_requests: number;
+};
 
 export type Period = {
   days: number;
@@ -31,6 +41,7 @@ export type Period = {
   cache_write_tokens: number;
   cost_micros: number;
   cost_unknown_requests: number;
+  trend?: Trend[];
   models: Rank[];
   channels: Rank[];
 };

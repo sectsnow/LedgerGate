@@ -47,6 +47,18 @@ pub struct WidgetRank {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct WidgetTrend {
+    date: String,
+    available: bool,
+    requests: i64,
+    errors: i64,
+    input_tokens: i64,
+    output_tokens: i64,
+    cost_micros: i64,
+    cost_unknown_requests: i64,
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct WidgetPeriod {
     days: u8,
     retention_days: i64,
@@ -58,6 +70,8 @@ pub struct WidgetPeriod {
     cache_write_tokens: i64,
     cost_micros: i64,
     cost_unknown_requests: i64,
+    #[serde(default)]
+    trend: Vec<WidgetTrend>,
     models: Vec<WidgetRank>,
     channels: Vec<WidgetRank>,
 }
@@ -244,11 +258,14 @@ mod tests {
 
     #[test]
     fn overview_decodes_period_totals_and_rankings() {
-        let body = r#"{"date":"2026-11-24","accounts":[],"requests":1,"input_tokens":10,"output_tokens":5,"period":{"days":7,"retention_days":30,"requests":3,"errors":1,"input_tokens":100,"output_tokens":20,"cache_read_tokens":40,"cache_write_tokens":4,"cost_micros":1234,"cost_unknown_requests":1,"models":[{"name":"model-a","requests":2,"tokens":90}],"channels":[{"name":"channel-a","requests":3,"tokens":120}]}}"#;
+        let body = r#"{"date":"2026-11-24","accounts":[],"requests":1,"input_tokens":10,"output_tokens":5,"period":{"days":7,"retention_days":30,"requests":3,"errors":1,"input_tokens":100,"output_tokens":20,"cache_read_tokens":40,"cache_write_tokens":4,"cost_micros":1234,"cost_unknown_requests":1,"trend":[{"date":"2026-11-18","available":false,"requests":0,"errors":0,"input_tokens":0,"output_tokens":0,"cost_micros":0,"cost_unknown_requests":0},{"date":"2026-11-24","available":true,"requests":3,"errors":1,"input_tokens":100,"output_tokens":20,"cost_micros":1234,"cost_unknown_requests":1}],"models":[{"name":"model-a","requests":2,"tokens":90}],"channels":[{"name":"channel-a","requests":3,"tokens":120}]}}"#;
         let overview: WidgetOverview = serde_json::from_str(body).unwrap();
         let period = overview.period.unwrap();
         assert_eq!(period.days, 7);
         assert_eq!(period.cost_unknown_requests, 1);
+        assert_eq!(period.trend.len(), 2);
+        assert!(!period.trend[0].available);
+        assert_eq!(period.trend[1].requests, 3);
         assert_eq!(period.models[0].name, "model-a");
         assert_eq!(period.channels[0].tokens, 120);
     }
