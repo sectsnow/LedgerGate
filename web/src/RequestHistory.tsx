@@ -130,7 +130,7 @@ export default function RequestHistory({ channels, dialog }: { channels: Channel
     <div className="list-toolbar request-toolbar">
       <div className="search"><Search size={16} /><input aria-label="搜索请求记录" placeholder="搜索模型、渠道、密钥名称或请求编号" value={draft} onChange={event => setDraft(event.target.value)} /></div>
       <select aria-label="筛选请求状态" value={state} onChange={event => setState(event.target.value)}>
-        <option value="">全部状态</option><option value="running">进行中</option><option value="completed">已完成</option><option value="failed">失败</option><option value="cancelled">已取消</option>
+        <option value="">全部状态</option><option value="running">进行中</option><option value="completed">已完成</option><option value="failed">失败</option><option value="cancelled">客户端断开</option>
       </select>
       <button className="secondary" type="button" disabled={loading} onClick={() => setVersion(value => value + 1)}><RefreshCw size={14} />刷新请求记录</button>
     </div>

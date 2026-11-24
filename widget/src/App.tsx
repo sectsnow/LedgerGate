@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { availableMonitors, getCurrentWindow, LogicalSize, PhysicalPosition, primaryMonitor, type PhysicalSize } from "@tauri-apps/api/window";
 import { ArrowUpRight, Check, LoaderCircle, Palette, Pause, Pin, Play, RefreshCw, Settings, X } from "lucide-react";
 import logo from "../src-tauri/icons/icon.png";
 import { amount, finances, type Overview, type Trend } from "./summary";
+import { parseWindowState, resolveWindowGeometry, serializeWindowState, WINDOW_STATE_STORAGE_KEY } from "./windowState";
 
 type Connection = { server: string; configured: boolean };
 const themes = [
@@ -20,6 +21,16 @@ const viewLabels: Record<WidgetView, string> = { overview: "概览", accounts: "
 const count = (value: number) => value.toLocaleString("zh-CN");
 const compact = (value: number) => value.toLocaleString("zh-CN", { notation: "compact", maximumFractionDigits: 1 });
 const time = (value: number) => new Date(value).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+
+async function restoreWindowState(window: ReturnType<typeof getCurrentWindow>) {
+  let saved: ReturnType<typeof parseWindowState> = null;
+  try { saved = parseWindowState(localStorage.getItem(WINDOW_STATE_STORAGE_KEY)); } catch { return; }
+  if (!saved) return;
+  const monitors = await availableMonitors();
+  const geometry = resolveWindowGeometry(saved, monitors, await window.scaleFactor(), (await primaryMonitor()) ?? undefined);
+  await window.setSize(new LogicalSize(geometry.width, geometry.height));
+  if (monitors.length) await window.setPosition(new PhysicalPosition(geometry.x, geometry.y));
+}
 
 function TrendChart({ title, rows, value, format }: { title: string; rows: Trend[]; value: (row: Trend) => number; format: (value: number) => string }) {
   const trend = rows;
@@ -127,6 +138,46 @@ export default function App() {
     document.addEventListener("keydown", closeOnEscape);
     return () => { document.removeEventListener("pointerdown", closeOnOutside); document.removeEventListener("keydown", closeOnEscape); };
   }, [themeMenuOpen]);
+
+  useEffect(() => {
+    const appWindow = getCurrentWindow();
+    let disposed = false;
+    let timer: number | undefined;
+    let unlistenMoved: (() => void) | undefined;
+    let unlistenResized: (() => void) | undefined;
+    const persist = async (position?: PhysicalPosition, size?: PhysicalSize) => {
+      try {
+        const [actualPosition, actualSize, scaleFactor] = await Promise.all([
+          position ? Promise.resolve(position) : appWindow.outerPosition(),
+          size ? Promise.resolve(size) : appWindow.innerSize(),
+          appWindow.scaleFactor(),
+        ]);
+        if (disposed) return;
+        const logicalSize = actualSize.toLogical(scaleFactor);
+        localStorage.setItem(WINDOW_STATE_STORAGE_KEY, serializeWindowState({ x: actualPosition.x, y: actualPosition.y, width: logicalSize.width, height: logicalSize.height, scaleFactor }));
+      } catch { /* 窗口关闭或系统禁用本地存储时保留当前窗口状态。 */ }
+    };
+    const queuePersist = (position?: PhysicalPosition, size?: PhysicalSize) => {
+      if (timer !== undefined) globalThis.window.clearTimeout(timer);
+      timer = globalThis.window.setTimeout(() => void persist(position, size), 150);
+    };
+    const setup = async () => {
+      try { await restoreWindowState(appWindow); } catch { /* 显示器配置变化时使用系统默认位置。 */ }
+      if (disposed) return;
+      try {
+        unlistenMoved = await appWindow.onMoved(({ payload }) => queuePersist(payload));
+        unlistenResized = await appWindow.onResized(({ payload }) => queuePersist(undefined, payload));
+        queuePersist();
+      } catch { /* 浏览器预览没有 Tauri 窗口事件时仅跳过窗口状态监听。 */ }
+    };
+    void setup();
+    return () => {
+      disposed = true;
+      if (timer !== undefined) globalThis.window.clearTimeout(timer);
+      unlistenMoved?.();
+      unlistenResized?.();
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;

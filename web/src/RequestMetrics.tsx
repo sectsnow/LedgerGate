@@ -73,7 +73,7 @@ export default function RequestMetrics({ row, channel, small = false, detail = f
   const channelName = row.channel_name || channel?.channel.name || (row.channel_id ? `渠道 #${row.channel_id}` : "未选择渠道");
   const channelLabel = row.account_name ? `${row.account_name} / ${channelName}` : channelName;
   const showRouting = row.routing_reason && (detail || !["按优先级选择可用成员", "按权重分配到此成员", "使用手动选定的成员", "备用亲和期内继续使用当前成员"].includes(row.routing_reason));
-  const status = row.state === "interrupted" ? "已中断" : row.status === 0 && row.retry_at ? "等待重试" : row.state === "streaming" ? timing.firstContentMS == null ? "已接收响应" : "输出中" : row.status === 0 ? "进行中" : row.status === 499 ? "已取消" : row.status < 400 ? "成功" : "失败";
+  const status = row.state === "interrupted" ? "已中断" : row.status === 0 && row.retry_at ? "等待重试" : row.state === "streaming" ? timing.firstContentMS == null ? "已接收响应" : "输出中" : row.status === 0 ? "进行中" : row.status === 499 ? "客户端断开" : row.status < 400 ? "成功" : "失败";
   const cost = row.cost_status === "unknown" || modern && !known && row.cost_detail?.mode !== "request" ? pending ? "等待核算" : "无法估算" : money(row.cost_micros);
   return (
     <article className={`request-log-card${small ? " request-log-compact" : ""}`} aria-label={`${row.model || "无模型"} 请求 ${row.request_id}`}>
@@ -86,7 +86,7 @@ export default function RequestMetrics({ row, channel, small = false, detail = f
           {row.upstream_protocol !== row.protocol && <span className="request-protocol">{protocolNames[row.upstream_protocol] || row.upstream_protocol || "未记录协议"}</span>}
           <span className="request-channel" title={channelLabel}>{channelLabel}</span><code title={row.upstream_model}>{row.upstream_model || "未记录上游模型"}</code>
         </div>
-        <span className={`request-result ${row.status >= 400 ? "failed" : row.status === 0 ? "running" : "completed"}`}>{status}{row.status > 0 && ` · ${row.status}`}</span>
+        <span className={`request-result ${row.status >= 400 ? "failed" : row.status === 0 ? "running" : "completed"}`} title={row.status === 499 ? "客户端请求已取消或下游连接写入失败，不一定是用户主动取消；上游仍可能计费。" : undefined}>{status}{row.status > 0 && ` · ${row.status}`}</span>
         {children}
       </div>
       <div className="request-log-context">
