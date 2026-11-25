@@ -20,3 +20,16 @@ test("显示器消失或 DPI 改变时，窗口回到可见工作区并保持逻
   assert.deepEqual(resolveWindowGeometry({ x: 2100, y: 100, width: 400, height: 408, scaleFactor: 1 }, [primary, secondary], 1), { x: 2100, y: 100, width: 400, height: 408, scaleFactor: 1.5 });
   assert.deepEqual(resolveWindowGeometry({ x: 5000, y: 500, width: 400, height: 408, scaleFactor: 1.5 }, [primary], 1), { x: 1508, y: 500, width: 400, height: 408, scaleFactor: 1 });
 });
+
+test("内容高度可伸缩，保留宽度并限制在显示器工作区内", () => {
+  const monitor = { position: { x: 0, y: 0 }, size: { width: 1920, height: 1080 }, workArea: { position: { x: 0, y: 0 }, size: { width: 1920, height: 1040 } }, scaleFactor: 1.5 };
+  const saved = { x: 100, y: 700, width: 440, height: 720, scaleFactor: 1.5 };
+  const compact = resolveWindowGeometry(saved, [monitor], 1.5, monitor, 280);
+  assert.equal(compact.width, 440);
+  assert.equal(compact.height, 360);
+  const expanded = resolveWindowGeometry(saved, [monitor], 1.5, monitor, 1500);
+  assert.equal(expanded.width, 440);
+  assert.equal(expanded.height, 669);
+  assert.ok(expanded.y + expanded.height * expanded.scaleFactor <= 1040);
+  assert.equal(resolveWindowGeometry(saved, [], 1.5, undefined, 2000).height, 900);
+});

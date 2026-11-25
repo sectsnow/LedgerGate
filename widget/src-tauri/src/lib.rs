@@ -1,4 +1,5 @@
 mod credentials;
+pub mod environment;
 
 use reqwest::{redirect::Policy, Url};
 use serde::{Deserialize, Serialize};

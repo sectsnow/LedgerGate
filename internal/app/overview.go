@@ -48,16 +48,17 @@ func (a *App) requestActivity(now time.Time) ([]RequestDay, error) {
 }
 
 type AccountSummary struct {
-	Currency        string          `json:"currency"`
-	Accounts        int             `json:"accounts"`
-	Balance         *float64        `json:"balance"`
-	TodayUsed       *float64        `json:"today_used"`
-	Used            *float64        `json:"used"`
-	BalanceAccounts int             `json:"balance_accounts"`
-	TodayAccounts   int             `json:"today_accounts"`
-	UsedAccounts    int             `json:"used_accounts"`
-	Minimum         *MinimumBalance `json:"minimum"`
-	History         []BalanceDay    `json:"history"`
+	Currency         string          `json:"currency"`
+	Accounts         int             `json:"accounts"`
+	Balance          *float64        `json:"balance"`
+	TodayUsed        *float64        `json:"today_used"`
+	TodayCollectedAt *time.Time      `json:"today_collected_at"`
+	Used             *float64        `json:"used"`
+	BalanceAccounts  int             `json:"balance_accounts"`
+	TodayAccounts    int             `json:"today_accounts"`
+	UsedAccounts     int             `json:"used_accounts"`
+	Minimum          *MinimumBalance `json:"minimum"`
+	History          []BalanceDay    `json:"history"`
 }
 
 func sumKnown(total *float64, value float64) *float64 {
@@ -80,7 +81,7 @@ func (a *App) accountOverview(now time.Time) ([]AccountSummary, error) {
 		TodayDate string
 	}{}
 	err := a.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Select("id", "name", "currency", "balance", "used", "today_used", "today_date").Order("id").Find(&accounts).Error; err != nil {
+		if err := tx.Select("id", "name", "currency", "balance", "used", "today_used", "today_date", "today_collected_at").Order("id").Find(&accounts).Error; err != nil {
 			return err
 		}
 		if len(accounts) == 0 {
@@ -137,6 +138,10 @@ func (a *App) accountOverview(now time.Time) ([]AccountSummary, error) {
 		if account.TodayUsed != nil && account.TodayDate == today.Format("2006-01-02") {
 			group.TodayUsed = sumKnown(group.TodayUsed, *account.TodayUsed)
 			group.TodayAccounts++
+			// 汇总展示最早成功采集时间；任一参与账户时间未知时不推测。
+			if group.TodayAccounts == 1 || account.TodayCollectedAt == nil || group.TodayCollectedAt != nil && account.TodayCollectedAt.Before(*group.TodayCollectedAt) {
+				group.TodayCollectedAt = account.TodayCollectedAt
+			}
 		}
 		if account.Used != nil {
 			group.Used = sumKnown(group.Used, *account.Used)

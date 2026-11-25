@@ -208,6 +208,7 @@ func (a *App) fetchAccount(ctx context.Context, account *Account) (*rateSnapshot
 	date := day.Format("2006-01-02")
 	if account.TodayDate != date {
 		account.TodayUsed, account.TodayDate = nil, date
+		account.TodayCollectedAt = nil
 	}
 	path := "/api/user/self"
 	if account.Kind == "sub2api" {
@@ -250,6 +251,8 @@ func (a *App) fetchAccount(ctx context.Context, account *Account) (*rateSnapshot
 			warnings = append(warnings, "今日消费采集失败，显示当日上次可用数据")
 		} else if today, ok := number(obj(stats)["today_actual_cost"]); ok {
 			account.TodayUsed = &today
+			collectedAt := time.Now()
+			account.TodayCollectedAt = &collectedAt
 		} else {
 			warnings = append(warnings, "上游未返回今日实际消费，显示当日上次可用数据")
 		}
@@ -261,6 +264,8 @@ func (a *App) fetchAccount(ctx context.Context, account *Account) (*rateSnapshot
 		} else if quota, ok := number(obj(stats)["quota"]); ok {
 			today := quota / account.QuotaPerUnit
 			account.TodayUsed = &today
+			collectedAt := time.Now()
+			account.TodayCollectedAt = &collectedAt
 		} else {
 			warnings = append(warnings, "上游未返回今日消费，显示当日上次可用数据")
 		}
@@ -364,6 +369,7 @@ func (a *App) collectAccount(parent context.Context, id uint, scheduled bool) (*
 	var autoDisabled []uint
 	err = a.DB.Transaction(func(tx *gorm.DB) error {
 		updates := map[string]any{"balance": account.Balance, "used": account.Used, "today_used": account.TodayUsed, "today_date": account.TodayDate, "status": account.Status, "last_error": account.LastError, "rates": account.Rates, "subscriptions": account.Subscriptions, "announcements": account.Announcements, "warnings": account.Warnings, "checked_at": account.CheckedAt, "next_check_at": account.NextCheckAt, "token": account.Token, "refresh_token": account.RefreshToken, "cookie": account.Cookie, "user_id": account.UserID}
+		updates["today_collected_at"] = account.TodayCollectedAt
 		result := tx.Model(&Account{}).Where("id = ? AND revision = ?", account.ID, account.Revision).Updates(updates)
 		if result.Error != nil {
 			return result.Error
@@ -444,6 +450,11 @@ func (a *App) collectAccount(parent context.Context, id uint, scheduled bool) (*
 		}
 		clear(a.weights)
 		a.mu.Unlock()
+	}
+	if err == nil && collectedRates != nil {
+		if syncErr := a.syncAccountRatePrices(parent, account); syncErr != nil {
+			slog.Warn("倍率变化后同步价格未完成，将在后续采集时重试", "account_id", id, "error", syncErr)
+		}
 	}
 	return &account, err
 }

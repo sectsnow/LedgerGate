@@ -54,13 +54,18 @@ export function serializeWindowState(state: WindowState): string {
   });
 }
 
-export function resolveWindowGeometry(saved: WindowState, monitors: MonitorGeometry[], fallbackScaleFactor: number, fallbackMonitor?: MonitorGeometry) {
+export function windowMonitor(saved: WindowState, monitors: MonitorGeometry[], fallbackMonitor?: MonitorGeometry) {
   const savedPhysicalWidth = saved.width * saved.scaleFactor;
   const savedPhysicalHeight = saved.height * saved.scaleFactor;
   const center = { x: saved.x + savedPhysicalWidth / 2, y: saved.y + savedPhysicalHeight / 2 };
-  const monitor = monitors.find(value => center.x >= value.position.x && center.x < value.position.x + value.size.width && center.y >= value.position.y && center.y < value.position.y + value.size.height) || fallbackMonitor || monitors[0];
-  const size = clampWindowSize(saved.width, saved.height);
+  return monitors.find(value => center.x >= value.position.x && center.x < value.position.x + value.size.width && center.y >= value.position.y && center.y < value.position.y + value.size.height) || fallbackMonitor || monitors[0];
+}
+
+export function resolveWindowGeometry(saved: WindowState, monitors: MonitorGeometry[], fallbackScaleFactor: number, fallbackMonitor?: MonitorGeometry, contentHeight?: number) {
+  const monitor = windowMonitor(saved, monitors, fallbackMonitor);
   const scaleFactor = monitor?.scaleFactor || fallbackScaleFactor;
+  const height = contentHeight === undefined ? saved.height : Math.min(Math.ceil(contentHeight), monitor ? Math.floor(monitor.workArea.size.height / scaleFactor) - 24 : WINDOW_SIZE_LIMITS.maxHeight);
+  const size = clampWindowSize(saved.width, height);
   if (!monitor) return { x: saved.x, y: saved.y, ...size, scaleFactor };
   const physicalWidth = size.width * scaleFactor;
   const physicalHeight = size.height * scaleFactor;

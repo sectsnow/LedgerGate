@@ -41,6 +41,7 @@ type modelPricing struct {
 	Stale              bool        `json:"stale,omitempty"`
 	MultiplierIncluded bool        `json:"multiplier_included,omitempty"`
 	AppliedMultiplier  *float64    `json:"applied_multiplier,omitempty"`
+	RateGroupID        string      `json:"rate_group_id,omitempty"`
 }
 
 func intPointer(value int64) *int64 { return &value }

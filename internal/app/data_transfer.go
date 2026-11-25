@@ -293,6 +293,7 @@ func (a *App) prepareTransferExport(doc *transferDocument) error {
 		}
 		// 配置迁移不把源站的余额、采集状态和倍率快照当作目标站的实时数据。
 		row.Balance, row.Used, row.TodayUsed, row.CheckedAt = nil, nil, nil, nil
+		row.TodayCollectedAt = nil
 		row.TodayDate, row.Status, row.LastError, row.Rates, row.Subscriptions, row.Announcements, row.Warnings = "", "", "", "", "", "", ""
 		row.NextCheckAt = time.Time{}
 	}

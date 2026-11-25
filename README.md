@@ -46,7 +46,7 @@
 
 通知支持 Webhook、Telegram、Email、企业微信、钉钉、飞书和 Server酱。提供全局出站代理、凭据加密、网页备份恢复与选择性配置迁移。
 
-可使用 [Windows 桌面小部件](docs/usage.md#windows-桌面小部件)查看余额、今日实际消费、Token 和请求数。
+可使用 [Windows 桌面小部件](docs/usage.md#windows-桌面小部件)查看余额、今日实际消费、Token 和请求数，支持完整总览、按内容适配高度，以及贴边收起为可切换指标的数据浮标。
 
 ## 快速开始
 
@@ -57,7 +57,7 @@
 ```yaml
 services:
   ledgergate:
-    image: ghcr.io/sectsnow/ledgergate:0.1.13
+    image: ghcr.io/sectsnow/ledgergate:0.1.14
     restart: unless-stopped
     ports:
       - "8081:8080"

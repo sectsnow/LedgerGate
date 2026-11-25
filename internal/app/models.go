@@ -3,39 +3,40 @@ package app
 import "time"
 
 type Account struct {
-	ID              uint       `json:"id" gorm:"primaryKey"`
-	Name            string     `json:"name"`
-	Kind            string     `json:"kind"`
-	BaseURL         string     `json:"base_url"`
-	Enabled         bool       `json:"enabled"`
-	UseProxy        bool       `json:"use_proxy" gorm:"not null;default:false"`
-	AuthMode        string     `json:"auth_mode"`
-	Username        string     `json:"username"`
-	UserID          string     `json:"user_id"`
-	Token           string     `json:"-"`
-	RefreshToken    string     `json:"-" gorm:"not null;default:''"`
-	Password        string     `json:"-"`
-	Cookie          string     `json:"-"`
-	LoginExtra      string     `json:"-" gorm:"not null;default:''"`
-	Currency        string     `json:"currency"`
-	QuotaPerUnit    float64    `json:"quota_per_unit"`
-	LowBalance      float64    `json:"low_balance"`
-	BlockEmpty      bool       `json:"block_empty"`
-	IntervalSeconds int        `json:"interval_seconds"`
-	Balance         *float64   `json:"balance"`
-	Used            *float64   `json:"used"`
-	TodayUsed       *float64   `json:"today_used"`
-	TodayDate       string     `json:"today_date"`
-	Status          string     `json:"status"`
-	LastError       string     `json:"last_error"`
-	Rates           string     `json:"rates"`
-	Subscriptions   string     `json:"subscriptions"`
-	Announcements   string     `json:"announcements"`
-	Warnings        string     `json:"warnings"`
-	CheckedAt       *time.Time `json:"checked_at"`
-	NextCheckAt     time.Time  `json:"next_check_at"`
-	CreatedAt       time.Time  `json:"created_at"`
-	Revision        int        `json:"-"`
+	ID               uint       `json:"id" gorm:"primaryKey"`
+	Name             string     `json:"name"`
+	Kind             string     `json:"kind"`
+	BaseURL          string     `json:"base_url"`
+	Enabled          bool       `json:"enabled"`
+	UseProxy         bool       `json:"use_proxy" gorm:"not null;default:false"`
+	AuthMode         string     `json:"auth_mode"`
+	Username         string     `json:"username"`
+	UserID           string     `json:"user_id"`
+	Token            string     `json:"-"`
+	RefreshToken     string     `json:"-" gorm:"not null;default:''"`
+	Password         string     `json:"-"`
+	Cookie           string     `json:"-"`
+	LoginExtra       string     `json:"-" gorm:"not null;default:''"`
+	Currency         string     `json:"currency"`
+	QuotaPerUnit     float64    `json:"quota_per_unit"`
+	LowBalance       float64    `json:"low_balance"`
+	BlockEmpty       bool       `json:"block_empty"`
+	IntervalSeconds  int        `json:"interval_seconds"`
+	Balance          *float64   `json:"balance"`
+	Used             *float64   `json:"used"`
+	TodayUsed        *float64   `json:"today_used"`
+	TodayDate        string     `json:"today_date"`
+	TodayCollectedAt *time.Time `json:"today_collected_at"`
+	Status           string     `json:"status"`
+	LastError        string     `json:"last_error"`
+	Rates            string     `json:"rates"`
+	Subscriptions    string     `json:"subscriptions"`
+	Announcements    string     `json:"announcements"`
+	Warnings         string     `json:"warnings"`
+	CheckedAt        *time.Time `json:"checked_at"`
+	NextCheckAt      time.Time  `json:"next_check_at"`
+	CreatedAt        time.Time  `json:"created_at"`
+	Revision         int        `json:"-"`
 }
 
 type Snapshot struct {

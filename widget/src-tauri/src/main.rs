@@ -1,4 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod desktop_display;
 
 use ledgergate_widget::{
     connection_status, fetch_overview, load_connection, save_connection, ConnectionStatus,
@@ -52,31 +53,32 @@ fn open_dashboard(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|_| "无法打开 LedgerGate 控制台".into())
 }
 
-fn show_window(app: &tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
-}
-
 fn main() {
     tauri::Builder::default()
+        .manage(desktop_display::DisplayState::default())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             get_connection,
             configure,
             get_overview,
-            open_dashboard
+            open_dashboard,
+            desktop_display::set_widget_display,
+            desktop_display::hide_widget,
+            desktop_display::widget_pointer_down,
+            desktop_display::widget_menu_active,
+            desktop_display::set_widget_fullscreen_avoidance
         ])
         .setup(|app| {
-            let show = MenuItem::with_id(app, "show", "显示小部件", true, None::<&str>)?;
+            let show = MenuItem::with_id(app, "show", "显示完整面板", true, None::<&str>)?;
+            let reset = MenuItem::with_id(app, "reset", "重置窗口位置", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &quit])?;
+            let menu = Menu::with_items(app, &[&show, &reset, &quit])?;
             let mut tray = TrayIconBuilder::new()
                 .menu(&menu)
                 .tooltip("LedgerGate")
                 .on_menu_event(|app, event| match event.id().as_ref() {
-                    "show" => show_window(app),
+                    "show" => desktop_display::show_panel(app, false),
+                    "reset" => desktop_display::show_panel(app, true),
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -89,19 +91,20 @@ fn main() {
                             ..
                         }
                     ) {
-                        show_window(tray.app_handle());
+                        desktop_display::show_panel(tray.app_handle(), false);
                     }
                 });
             if let Some(icon) = app.default_window_icon() {
                 tray = tray.icon(icon.clone());
             }
             tray.build(app)?;
+            desktop_display::watch_fullscreen(app.handle().clone());
             Ok(())
         })
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                let _ = window.hide();
+                let _ = desktop_display::hide(window.app_handle());
             }
         })
         .run(tauri::generate_context!())

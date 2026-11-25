@@ -1330,7 +1330,12 @@ function AccountFinance({ data }: { data: Data }) {
           tone="cost"
           value={financialAmount(summary?.today_used ?? null, unit)}
           icon={<Receipt size={18} aria-hidden="true" />}
-          note={coverage(summary?.today_accounts || 0, "按上游实际扣费统计")}
+          note={[
+            coverage(summary?.today_accounts || 0, "按上游实际扣费统计"),
+            summary?.today_collected_at
+              ? `最早采集 ${new Date(summary.today_collected_at).toLocaleTimeString("zh-CN", { hour12: false })}（非实时）`
+              : "成功采集后显示更新时间",
+          ].join(" · ")}
         />
         <Stat
           label="累计消费"
@@ -1594,7 +1599,8 @@ function Overview({
           note={
             [totals.cost_unknown_requests
               ? `${totals.cost_unknown_requests} 次费用未知，未计入估算`
-              : "按模型配置单价估算",
+              : "按请求完成时的价格估算",
+            "实时累计，以上游实际扣费为准",
             pending ? `${pending} 条告警等待送达或发送失败` : ""].filter(Boolean).join(" · ")
           }
         />

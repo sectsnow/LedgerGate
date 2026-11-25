@@ -11,7 +11,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "label": "main", "title": "LedgerGate", "width": 400, "height": 720, "minWidth": 360, "minHeight": 360, "maxWidth": 720, "maxHeight": 900, "resizable": true, "center": true, "decorations": false, "alwaysOnTop": true }],
+    "windows": [{ "label": "main", "title": "LedgerGate", "width": 400, "height": 720, "minWidth": 360, "minHeight": 360, "maxWidth": 720, "maxHeight": 900, "resizable": true, "center": true, "decorations": false, "transparent": true, "alwaysOnTop": true }],
     "security": { "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost; object-src 'none'; frame-src 'none'" }
   },
   "bundle": {

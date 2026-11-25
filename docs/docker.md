@@ -41,7 +41,7 @@ LEDGERGATE_PORT=18080 docker compose up -d
 
 上传使用内置 `GITHUB_TOKEN`，权限限定为读取源码和写入 Packages，无需添加发布用 PAT。第三方 Actions 固定到已核对的提交 SHA。镜像名称自动按仓库路径转为小写；当前仓库对应 `ghcr.io/sectsnow/ledgergate`。
 
-LedgerGate 的 GHCR 镜像包已公开，拉取镜像无需登录；源码仓库保持私有，镜像包的可见性单独设置。
+LedgerGate 的源码仓库和 GHCR 镜像包均已公开，拉取镜像无需登录；两者的可见性单独设置。
 
 在仓库根目录的 `.env` 文件中指定已发布的镜像，例如：
 

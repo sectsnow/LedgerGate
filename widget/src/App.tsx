@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { availableMonitors, getCurrentWindow, LogicalSize, PhysicalPosition, primaryMonitor, type PhysicalSize } from "@tauri-apps/api/window";
-import { ArrowUpRight, Check, LoaderCircle, Palette, Pause, Pin, Play, RefreshCw, Settings, X } from "lucide-react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { ArrowUpRight, Check, LoaderCircle, Palette, Pause, Pin, Play, Minimize2, RefreshCw, Settings, X } from "lucide-react";
 import logo from "../src-tauri/icons/icon.png";
 import { amount, finances, type Overview, type Trend } from "./summary";
-import { parseWindowState, resolveWindowGeometry, serializeWindowState, WINDOW_STATE_STORAGE_KEY } from "./windowState";
+import useWidgetDisplay from "./useWidgetDisplay";
+import WidgetBadge from "./WidgetBadge";
+import WidgetDisplaySettings from "./WidgetDisplaySettings";
 
 type Connection = { server: string; configured: boolean };
 const themes = [
@@ -17,20 +19,10 @@ const themes = [
 type Theme = typeof themes[number]["id"];
 const views = ["overview", "accounts", "analysis", "alerts", "ranking"] as const;
 type WidgetView = typeof views[number];
-const viewLabels: Record<WidgetView, string> = { overview: "概览", accounts: "账户", analysis: "分析", alerts: "告警", ranking: "排行" };
+const viewLabels: Record<WidgetView, string> = { overview: "总览", accounts: "账户", analysis: "分析", alerts: "告警", ranking: "排行" };
 const count = (value: number) => value.toLocaleString("zh-CN");
 const compact = (value: number) => value.toLocaleString("zh-CN", { notation: "compact", maximumFractionDigits: 1 });
 const time = (value: number) => new Date(value).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
-
-async function restoreWindowState(window: ReturnType<typeof getCurrentWindow>) {
-  let saved: ReturnType<typeof parseWindowState> = null;
-  try { saved = parseWindowState(localStorage.getItem(WINDOW_STATE_STORAGE_KEY)); } catch { return; }
-  if (!saved) return;
-  const monitors = await availableMonitors();
-  const geometry = resolveWindowGeometry(saved, monitors, await window.scaleFactor(), (await primaryMonitor()) ?? undefined);
-  await window.setSize(new LogicalSize(geometry.width, geometry.height));
-  if (monitors.length) await window.setPosition(new PhysicalPosition(geometry.x, geometry.y));
-}
 
 function TrendChart({ title, rows, value, format }: { title: string; rows: Trend[]; value: (row: Trend) => number; format: (value: number) => string }) {
   const trend = rows;
@@ -77,6 +69,10 @@ export default function App() {
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const display = useWidgetDisplay(connection?.configured ?? false, editing);
+  const [displaySettingsOpen, setDisplaySettingsOpen] = useState(false);
+  const widgetRoot = useRef<HTMLElement>(null);
+  const contentBody = useRef<HTMLDivElement>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [days, setDays] = useState<1 | 7 | 30>(1);
   const [view, setView] = useState<WidgetView>(() => {
@@ -106,6 +102,8 @@ export default function App() {
   });
   const generation = useRef(0);
 
+  useEffect(() => { display.setInteracting(displaySettingsOpen || themeMenuOpen); }, [displaySettingsOpen, themeMenuOpen, display.setInteracting]);
+
   useEffect(() => {
     try { localStorage.setItem("ledgergate-widget-theme", theme); } catch { /* 系统禁用本地存储时仅保留当前选择。 */ }
   }, [theme]);
@@ -119,12 +117,12 @@ export default function App() {
   }, [autoRotate]);
 
   useEffect(() => {
-    if (!autoRotate || !connection?.configured || editing) return;
+    if (!autoRotate || !connection?.configured || editing || display.mode !== "panel" || !display.shown || display.busy || displaySettingsOpen || themeMenuOpen) return;
     const timer = window.setInterval(() => {
       setView(current => views[(views.indexOf(current) + 1) % views.length]);
     }, 10_000);
     return () => window.clearInterval(timer);
-  }, [autoRotate, connection?.configured, editing]);
+  }, [autoRotate, connection?.configured, editing, display.mode, display.shown, display.busy, displaySettingsOpen, themeMenuOpen]);
 
   useEffect(() => {
     if (!themeMenuOpen) return;
@@ -140,44 +138,29 @@ export default function App() {
   }, [themeMenuOpen]);
 
   useEffect(() => {
-    const appWindow = getCurrentWindow();
+    const root = widgetRoot.current;
+    const body = contentBody.current;
+    if (!display.ready || display.busy || display.mode !== "panel" || !display.shown || !root || !body || editing || !connection?.configured) return;
+    const content = body.parentElement!;
+    content.scrollTop = 0;
     let disposed = false;
+    let revision = 0;
     let timer: number | undefined;
-    let unlistenMoved: (() => void) | undefined;
-    let unlistenResized: (() => void) | undefined;
-    const persist = async (position?: PhysicalPosition, size?: PhysicalSize) => {
-      try {
-        const [actualPosition, actualSize, scaleFactor] = await Promise.all([
-          position ? Promise.resolve(position) : appWindow.outerPosition(),
-          size ? Promise.resolve(size) : appWindow.innerSize(),
-          appWindow.scaleFactor(),
-        ]);
-        if (disposed) return;
-        const logicalSize = actualSize.toLogical(scaleFactor);
-        localStorage.setItem(WINDOW_STATE_STORAGE_KEY, serializeWindowState({ x: actualPosition.x, y: actualPosition.y, width: logicalSize.width, height: logicalSize.height, scaleFactor }));
-      } catch { /* 窗口关闭或系统禁用本地存储时保留当前窗口状态。 */ }
+    const fit = (current: number) => {
+      if (disposed || current !== revision) return;
+      const style = getComputedStyle(content);
+      const height = body.getBoundingClientRect().height + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) + root.getBoundingClientRect().height - content.getBoundingClientRect().height;
+      void display.fitHeight(height);
     };
-    const queuePersist = (position?: PhysicalPosition, size?: PhysicalSize) => {
-      if (timer !== undefined) globalThis.window.clearTimeout(timer);
-      timer = globalThis.window.setTimeout(() => void persist(position, size), 150);
-    };
-    const setup = async () => {
-      try { await restoreWindowState(appWindow); } catch { /* 显示器配置变化时使用系统默认位置。 */ }
-      if (disposed) return;
-      try {
-        unlistenMoved = await appWindow.onMoved(({ payload }) => queuePersist(payload));
-        unlistenResized = await appWindow.onResized(({ payload }) => queuePersist(undefined, payload));
-        queuePersist();
-      } catch { /* 浏览器预览没有 Tauri 窗口事件时仅跳过窗口状态监听。 */ }
-    };
-    void setup();
-    return () => {
-      disposed = true;
-      if (timer !== undefined) globalThis.window.clearTimeout(timer);
-      unlistenMoved?.();
-      unlistenResized?.();
-    };
-  }, []);
+    const observer = new ResizeObserver(() => {
+      const current = ++revision;
+      if (timer !== undefined) window.clearTimeout(timer);
+      timer = window.setTimeout(() => void fit(current), 80);
+    });
+    observer.observe(body);
+    root.querySelectorAll(".titlebar, .bottom").forEach(element => observer.observe(element));
+    return () => { disposed = true; observer.disconnect(); if (timer !== undefined) window.clearTimeout(timer); };
+  }, [display.ready, display.busy, display.mode, display.shown, display.fitHeight, view, editing, connection?.configured]);
 
   useEffect(() => {
     let active = true;
@@ -206,11 +189,20 @@ export default function App() {
   }, [days]);
 
   useEffect(() => {
-    if (!connection?.configured) return;
+    if (!connection?.configured || !display.shown) return;
     void refresh();
     const timer = window.setInterval(() => void refresh(), 30_000);
     return () => { window.clearInterval(timer); generation.current++; };
-  }, [connection?.configured, refresh, refreshKey]);
+  }, [connection?.configured, display.shown, refresh, refreshKey]);
+
+  useEffect(() => {
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    void getCurrentWindow().listen("widget-resumed", () => {
+      if (connection?.configured && display.shown) void refresh();
+    }).then(value => { if (disposed) value(); else stop = value; }).catch(reason => setError(String(reason)));
+    return () => { disposed = true; stop?.(); };
+  }, [connection?.configured, display.shown, refresh]);
 
   async function save(event: React.FormEvent) {
     event.preventDefault();
@@ -240,10 +232,14 @@ export default function App() {
   if (period?.cost_unknown_requests) alerts.push({ tone: "warning", title: "费用未完整核算", detail: `${count(period.cost_unknown_requests)} 次请求缺少有效费用或用量信息` });
   if (period && period.retention_days < days) alerts.push({ tone: "info", title: "统计周期不完整", detail: `当前只保留 ${period.retention_days} 天汇总，无法覆盖完整的近 ${days} 天` });
   if (legacy) alerts.push({ tone: "info", title: "服务版本较旧", detail: "升级 LedgerGate 后可获取趋势、分析和排行数据" });
-  return <main className="widget" data-theme={theme}>
+  if (display.mode === "badge" && connection?.configured) return <WidgetBadge overview={overview} lastSuccess={lastSuccess} error={error || display.error} prefs={display.prefs} theme={theme} busy={display.busy}
+    onPrefs={display.updatePrefs} onExpand={display.expand} onHide={display.hide} onReset={display.reset}
+    onSettings={() => { void display.expand().then(() => setDisplaySettingsOpen(true)); }} />;
+  return <main className="widget" data-theme={theme} ref={widgetRoot} onPointerEnter={() => display.setInside(true)} onPointerLeave={() => display.setInside(false)}>
     <header className="titlebar" data-tauri-drag-region>
       <div className="brand" data-tauri-drag-region><img src={logo} alt="" draggable={false} data-tauri-drag-region /><span data-tauri-drag-region>LedgerGate</span></div>
       <div className="actions">
+        <button type="button" aria-label="收起为数据浮标" title="收起为数据浮标" disabled={display.busy || !display.ready || !connection?.configured || editing} onClick={() => void display.collapse()}><Minimize2 size={15} /></button>
         <button type="button" aria-label="刷新数据" title="刷新数据" disabled={refreshing || !connection?.configured || editing} onClick={() => void refresh()}>{refreshing ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}</button>
         <button type="button" className={autoRotate ? "active" : ""} aria-label={autoRotate ? "暂停自动轮播" : "开启自动轮播"} title={autoRotate ? "暂停自动轮播" : "开启自动轮播"} onClick={() => setAutoRotate(value => !value)}>{autoRotate ? <Pause size={16} /> : <Play size={16} />}</button>
         <div className="theme-control" ref={themeControl}>
@@ -255,7 +251,7 @@ export default function App() {
         </div>
         <button type="button" className={topmost ? "active" : ""} aria-label={topmost ? "取消置顶" : "置顶窗口"} title={topmost ? "取消置顶" : "置顶窗口"} onClick={() => setTopmost(value => !value)}><Pin size={16} /></button>
         <button type="button" aria-label="连接设置" title="连接设置" onClick={() => { setEditing(value => !value); setError(""); setToken(""); }}><Settings size={16} /></button>
-        <button type="button" aria-label="隐藏到托盘" title="隐藏到托盘" onClick={() => void getCurrentWindow().hide().catch(reason => setError(String(reason)))}><X size={16} /></button>
+        <button type="button" aria-label="隐藏到托盘" title="隐藏到托盘" onClick={() => void display.hide()}><X size={16} /></button>
       </div>
     </header>
     {editing || !connection?.configured ? <form className="settings" onSubmit={event => void save(event)}>
@@ -267,6 +263,9 @@ export default function App() {
       <div className="settings-actions">{connection?.configured && <button type="button" className="secondary" disabled={saving} onClick={() => { setEditing(false); setError(""); setToken(""); }}>取消</button>}<button type="submit" className="primary" disabled={saving || !server.trim()}>{saving ? "正在保存…" : "保存并连接"}</button></div>
     </form> : <>
       <section className="content" aria-label="运行概览">
+        <div className="content-body" ref={contentBody}>
+        <WidgetDisplaySettings prefs={display.prefs} currencies={groups.map(group => group.currency)} open={displaySettingsOpen}
+          onOpen={setDisplaySettingsOpen} onChange={display.updatePrefs} onReset={display.reset} />
         <div className="view-tabs" role="tablist" aria-label="显示内容">{views.map(item => <button key={item} type="button" role="tab" className={view === item ? "selected" : ""} aria-selected={view === item} onClick={() => setView(item)}>{viewLabels[item]}</button>)}</div>
         {view !== "accounts" && <div className="period-bar"><div><span className="eyebrow">{view === "ranking" ? "排行统计" : view === "analysis" ? "用量分析" : "用量概览"}</span><small className="period-date">{overview ? `${overview.date} · 北京时间` : "北京时间"}</small></div><div className="period-tabs" role="group" aria-label="统计周期">{([[1, "今日"], [7, "近 7 天"], [30, "近 30 天"]] as const).map(([value, label]) => <button key={value} type="button" className={days === value ? "selected" : ""} aria-pressed={days === value} disabled={legacy && value !== 1} onClick={() => setDays(value)}>{label}</button>)}</div></div>}
         {view === "overview" && <>
@@ -276,7 +275,26 @@ export default function App() {
           {period && period.retention_days < days && <p className="notice">请求汇总保留 {period.retention_days} 天，当前周期可能不完整。</p>}
           {legacy && <p className="notice">当前服务仅支持今日概览，升级 LedgerGate 后可查看周期汇总和排行。</p>}
         </>}
-        {view === "analysis" && <>
+        {(view === "overview" || view === "accounts") && <section className={`section finance${view === "accounts" ? " account-view" : ""}`} aria-label="账户余额及今日实际消费">
+          <div className="section-title"><h2>账户资产</h2><span>上游采集 · 今日消费</span></div>
+          <div className="finance-head"><span>余额</span><span>今日实际消费</span></div>
+          {groups.length ? groups.map(group => <div className="finance-row" key={group.currency}>
+            <div><strong>{amount(group.balance, group.currency)}</strong>{group.balanceCount < group.accounts && <small>已采集 {group.balanceCount}/{group.accounts} 个账户</small>}</div>
+            <div><strong>{amount(group.today, group.currency)}</strong>{group.todayCount < group.accounts && <small>已采集 {group.todayCount}/{group.accounts} 个账户</small>}</div>
+            {group.attention && <p>部分账户未采集、已暂停或有提醒，数值可能沿用上次结果</p>}
+            {group.oldestCheck != null && <p>最早检查 {time(group.oldestCheck)}</p>}
+          </div>) : <div className="empty">{overview ? "暂无上游账户" : "等待账户数据"}</div>}
+        </section>}
+        {(view === "overview" || view === "ranking") && <>
+          {view !== "overview" && period && period.retention_days < days && <p className="notice">请求汇总保留 {period.retention_days} 天，当前周期可能不完整。</p>}
+          {view !== "overview" && legacy && <p className="notice">当前服务仅支持今日概览，升级 LedgerGate 后可查看周期汇总和排行。</p>}
+          {([ ["模型排行", period?.models], ["渠道排行", period?.channels] ] as const).map(([title, items]) => <section className="section ranking" key={title}>
+            <div className="section-title"><h2>{title}</h2><span>前 5 · 按 Token</span></div>
+            {items?.length ? <ol>{items.map((item, index) => <li key={`${item.name}-${index}`}><span className="rank-index">{index + 1}</span><span className="rank-name" title={item.name}>{item.name}</span><span className="rank-value" title={`${count(item.tokens)} Token · ${count(item.requests)} 次请求`}>{compact(item.tokens)} <small>· {count(item.requests)} 次</small></span></li>)}</ol> : <p className="empty">{legacy ? "升级服务后可查看" : period ? "暂无统计数据" : "等待读取统计"}</p>}
+          </section>)}
+        </>}
+        {(view === "overview" || view === "analysis") && <>
+          {view === "overview" && <div className="section section-title"><h2>用量分析与趋势</h2></div>}
           {period ? <div className="analysis-grid">
             <div><span>输入 Token</span><strong>{count(period.input_tokens)}</strong></div>
             <div><span>输出 Token</span><strong>{count(period.output_tokens)}</strong></div>
@@ -291,34 +309,17 @@ export default function App() {
             <TrendChart title="请求趋势" rows={period.trend ?? []} value={row => row.requests} format={count} />
             <TrendChart title="Token 趋势" rows={period.trend ?? []} value={row => row.input_tokens + row.output_tokens} format={count} />
           </div>}
-          {period && period.retention_days < days && <p className="notice">请求汇总保留 {period.retention_days} 天，当前周期可能不完整。</p>}
-          {legacy && <p className="notice">当前服务仅支持今日概览，升级 LedgerGate 后可查看周期分析。</p>}
+          {view !== "overview" && period && period.retention_days < days && <p className="notice">请求汇总保留 {period.retention_days} 天，当前周期可能不完整。</p>}
+          {view !== "overview" && legacy && <p className="notice">当前服务仅支持今日概览，升级 LedgerGate 后可查看周期分析。</p>}
         </>}
-        {view === "alerts" && <section className="alert-view" aria-label="告警">
+        {(view === "overview" || view === "alerts") && <section className={view === "overview" ? "section alert-view" : "alert-view"} aria-label="告警">
           <div className="section-title"><h2>运行告警</h2><span>{alerts.length ? `${alerts.length} 项提醒` : "状态正常"}</span></div>
           {alerts.length ? <div className="alert-list">{alerts.map((alert, index) => <article className={`alert-card ${alert.tone}`} key={`${alert.title}-${index}`}><strong>{alert.title}</strong><p>{alert.detail}</p></article>)}</div> : <p className="empty">暂无告警，当前采集和统计状态正常。</p>}
           <p className="detail-line">告警来自当前小部件已读取的数据，不会触发额外采集。</p>
         </section>}
-        {view === "accounts" && <section className="section finance account-view" aria-label="账户余额及今日实际消费">
-          <div className="section-title"><h2>账户资产</h2><span>上游采集 · 今日消费</span></div>
-          <div className="finance-head"><span>余额</span><span>今日实际消费</span></div>
-          {groups.length ? groups.map(group => <div className="finance-row" key={group.currency}>
-            <div><strong>{amount(group.balance, group.currency)}</strong>{group.balanceCount < group.accounts && <small>已采集 {group.balanceCount}/{group.accounts} 个账户</small>}</div>
-            <div><strong>{amount(group.today, group.currency)}</strong>{group.todayCount < group.accounts && <small>已采集 {group.todayCount}/{group.accounts} 个账户</small>}</div>
-            {group.attention && <p>部分账户未采集、已暂停或有提醒，数值可能沿用上次结果</p>}
-            {group.oldestCheck != null && <p>最早检查 {time(group.oldestCheck)}</p>}
-          </div>) : <div className="empty">{overview ? "暂无上游账户" : "等待账户数据"}</div>}
-        </section>}
-        {view === "ranking" && <>
-          {period && period.retention_days < days && <p className="notice">请求汇总保留 {period.retention_days} 天，当前周期可能不完整。</p>}
-          {legacy && <p className="notice">当前服务仅支持今日概览，升级 LedgerGate 后可查看周期汇总和排行。</p>}
-          {([ ["模型排行", period?.models], ["渠道排行", period?.channels] ] as const).map(([title, items]) => <section className="section ranking" key={title}>
-            <div className="section-title"><h2>{title}</h2><span>前 5 · 按 Token</span></div>
-            {items?.length ? <ol>{items.map((item, index) => <li key={`${item.name}-${index}`}><span className="rank-index">{index + 1}</span><span className="rank-name" title={item.name}>{item.name}</span><span className="rank-value" title={`${count(item.tokens)} Token · ${count(item.requests)} 次请求`}>{compact(item.tokens)} <small>· {count(item.requests)} 次</small></span></li>)}</ol> : <p className="empty">{legacy ? "升级服务后可查看" : period ? "暂无统计数据" : "等待读取统计"}</p>}
-          </section>)}
-        </>}
+        </div>
       </section>
-      <footer className="bottom"><span className={error ? "error" : "hint"} role="status"><i className={`status-dot${error ? " failed" : lastSuccess ? "" : " pending"}`} />{error ? `${lastSuccess ? `数据截至 ${time(lastSuccess)} · ` : ""}${error}` : lastSuccess ? `更新于 ${time(lastSuccess)}` : "等待连接"}</span><button type="button" className="open" onClick={() => void invoke("open_dashboard").catch(reason => setError(String(reason)))}>打开控制台 <ArrowUpRight size={14} /></button></footer>
+      <footer className="bottom"><span className={error ? "error" : "hint"} role="status"><i className={`status-dot${error ? " failed" : lastSuccess ? "" : " pending"}`} />{error ? `${lastSuccess ? `数据截至 ${time(lastSuccess)} · ` : ""}${error}` : display.error || (lastSuccess ? `更新于 ${time(lastSuccess)}` : "等待连接")}</span><button type="button" className="open" onClick={() => void invoke("open_dashboard").catch(reason => setError(String(reason)))}>打开控制台 <ArrowUpRight size={14} /></button></footer>
     </>}
   </main>;
 }

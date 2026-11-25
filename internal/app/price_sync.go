@@ -97,6 +97,140 @@ func (a *App) syncAllModelPrices(c *gin.Context) {
 	c.JSON(200, result)
 }
 
+func groupPricingUpdates(price *modelPricing) map[string]any {
+	input, output := int64(0), int64(0)
+	if price.Input != nil {
+		input = *price.Input
+	}
+	if price.Output != nil {
+		output = *price.Output
+	}
+	return map[string]any{"pricing": jsonString(price), "input_price_micros": input, "output_price_micros": output,
+		"price_mode": "auto", "price_source": price.Source, "price_source_model": price.Model, "price_updated_at": price.UpdatedAt}
+}
+
+// 调用方持有账户采集锁；同步失败或全量同步占用锁时，下次采集继续检查报价。
+func (a *App) syncAccountRatePrices(parent context.Context, account Account) error {
+	if !a.priceSyncMu.TryLock() {
+		return nil
+	}
+	defer a.priceSyncMu.Unlock()
+	var groups []Group
+	var channels []Channel
+	if err := a.DB.WithContext(parent).Preload("Routes").Where("id IN (?)",
+		a.DB.Model(&Route{}).Select("routes.group_id").Joins("JOIN channels ON channels.id = routes.channel_id").Where("channels.account_id = ?", account.ID)).Find(&groups).Error; err != nil {
+		return err
+	}
+	if err := a.DB.WithContext(parent).Where("account_id = ?", account.ID).Find(&channels).Error; err != nil {
+		return err
+	}
+	channelByID := map[uint]Channel{}
+	for _, channel := range channels {
+		channelByID[channel.ID] = channel
+	}
+	after := readRateSnapshot(account.Rates)
+	selected := map[uint]bool{}
+	for _, group := range groups {
+		if group.priceMode() == "manual" || group.PriceModel != "" {
+			continue
+		}
+		for _, route := range group.Routes {
+			channel, exists := channelByID[route.ChannelID]
+			rate, known := after.Channels[route.ChannelID]
+			price := route.Pricing
+			if !exists || !known || rate.Multiplier == nil || rate.Identity != channelRateIdentity(channel) || price == nil || !price.MultiplierIncluded || price.ChannelIdentity != pricingIdentity(channel) || strings.Contains(price.Note, "独立倍率") {
+				continue
+			}
+			if price.Stale || price.AppliedMultiplier == nil || *price.AppliedMultiplier != *rate.Multiplier || price.RateGroupID != rate.GroupID {
+				selected[route.ID] = true
+			}
+		}
+	}
+	if len(selected) == 0 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(parent, 15*time.Second)
+	defer cancel()
+	catalog, fetchErr := a.fetchAccountPrices(ctx, account)
+	now := time.Now()
+	failed := 0
+	err := a.DB.WithContext(parent).Transaction(func(tx *gorm.DB) error {
+		var currentAccount Account
+		if err := tx.First(&currentAccount, account.ID).Error; err != nil {
+			return err
+		}
+		if currentAccount.Revision != account.Revision || currentAccount.Rates != account.Rates {
+			return fmt.Errorf("同步期间账户配置或倍率已变化")
+		}
+		for _, previousGroup := range groups {
+			var group Group
+			if err := tx.Preload("Routes").First(&group, previousGroup.ID).Error; err != nil {
+				return err
+			}
+			if group.priceMode() == "manual" || group.PriceModel != "" || group.priceReference() != previousGroup.priceReference() {
+				continue
+			}
+			changed, problem := false, ""
+			var representative *modelPricing
+			for i := range group.Routes {
+				route := &group.Routes[i]
+				if selected[route.ID] {
+					if route.Pricing == nil || !route.Pricing.MultiplierIncluded {
+						return fmt.Errorf("同步期间路由价格已变化")
+					}
+					var channel Channel
+					if err := tx.First(&channel, route.ChannelID).Error; err != nil {
+						return err
+					}
+					if pricingIdentity(channel) != pricingIdentity(channelByID[channel.ID]) {
+						return fmt.Errorf("同步期间渠道配置已变化")
+					}
+					price, reason := upstreamRoutePrice(account, channel, route.Model, catalog)
+					if fetchErr != nil || price == nil {
+						copy := *route.Pricing
+						copy.Stale = true
+						price = &copy
+						if fetchErr != nil {
+							reason = fetchErr.Error()
+						}
+						problem = reason
+						failed++
+					} else {
+						price.UpdatedAt = &now
+					}
+					if err := tx.Model(route).Update("pricing", jsonString(price)).Error; err != nil {
+						return err
+					}
+					route.Pricing, changed = price, true
+				}
+				if route.Pricing != nil && (representative == nil || route.ID == group.ActiveRouteID) {
+					representative = route.Pricing
+				}
+			}
+			if changed {
+				updates := groupPricingUpdates(representative)
+				const prefix = "倍率变化后价格同步失败："
+				if problem != "" {
+					updates["price_sync_error"] = prefix + problem
+				} else if strings.HasPrefix(group.PriceSyncError, prefix) {
+					updates["price_sync_error"] = ""
+				}
+				if err := tx.Model(&group).Updates(updates).Error; err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d 条路由同步失败，已保留并标注旧报价", failed)
+	}
+	return nil
+}
+
 func (a *App) syncPricesContext(parent context.Context) (result priceSyncResult, resultErr error) {
 	if !a.priceSyncMu.TryLock() {
 		return result, fmt.Errorf("价格同步正在运行")
@@ -211,6 +345,13 @@ func (a *App) syncPricesContext(parent context.Context) (result priceSyncResult,
 					reason = "同步期间渠道配置已变化，请重试"
 					continue
 				}
+				if channel.AccountID != nil {
+					var currentAccount Account
+					if tx.First(&currentAccount, *channel.AccountID).Error != nil || currentAccount.Revision != accounts[*channel.AccountID].Revision || currentAccount.Rates != accounts[*channel.AccountID].Rates {
+						reason = "同步期间账户配置或倍率已变化，请重试"
+						continue
+					}
+				}
 				price, problem := resolveRoutePricing(group, route, channel, accounts, upstream, accountErrors, catalogs, result.SyncedAt)
 				if problem != "" {
 					reason = strings.Trim(reason+"；"+channel.Name+"（"+route.Model+"）："+problem, "；")
@@ -236,15 +377,9 @@ func (a *App) syncPricesContext(parent context.Context) (result priceSyncResult,
 			}
 			updates := map[string]any{"price_sync_error": reason}
 			if representative != nil {
-				input, output := int64(0), int64(0)
-				if representative.Input != nil {
-					input = *representative.Input
+				for name, value := range groupPricingUpdates(representative) {
+					updates[name] = value
 				}
-				if representative.Output != nil {
-					output = *representative.Output
-				}
-				updates["pricing"], updates["input_price_micros"], updates["output_price_micros"] = jsonString(representative), input, output
-				updates["price_mode"], updates["price_source"], updates["price_source_model"], updates["price_updated_at"] = "auto", representative.Source, representative.Model, representative.UpdatedAt
 				if group.Vendor == "" && inferredVendor(group.Name) != "其他" {
 					updates["vendor"] = inferredVendor(group.Name)
 				}

@@ -178,6 +178,7 @@ func (a *App) mergeTransfer(tx *gorm.DB, doc transferDocument, selected []string
 			value.ID, value.Enabled, value.Revision, value.Status = 0, false, 1, "pending"
 			value.Token, value.RefreshToken, value.Password, value.Cookie, value.LoginExtra = a.seal(source.Credentials.Token), a.seal(source.Credentials.RefreshToken), a.seal(source.Credentials.Password), a.seal(source.Credentials.Cookie), a.seal(source.Credentials.LoginExtra)
 			value.Balance, value.Used, value.TodayUsed, value.CheckedAt = nil, nil, nil, nil
+			value.TodayCollectedAt = nil
 			value.TodayDate, value.LastError, value.Rates, value.Subscriptions, value.Announcements, value.Warnings = "", "", "", "", "", ""
 			value.NextCheckAt = time.Now()
 			if err := tx.Create(&value).Error; err != nil {

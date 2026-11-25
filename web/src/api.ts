@@ -42,6 +42,7 @@ export type Account = {
   used: number | null;
   today_used: number | null;
   today_date: string;
+  today_collected_at: string | null;
   status: string;
   last_error: string;
   warnings: string;
@@ -408,6 +409,7 @@ export type AccountSummary = {
   accounts: number;
   balance: number | null;
   today_used: number | null;
+  today_collected_at: string | null;
   used: number | null;
   balance_accounts: number;
   today_accounts: number;

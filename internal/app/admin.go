@@ -297,6 +297,7 @@ func (a *App) accounts(c *gin.Context) {
 	for _, item := range items {
 		if item.TodayDate != today {
 			item.TodayUsed = nil
+			item.TodayCollectedAt = nil
 		}
 		result = append(result, gin.H{"account": item, "has_token": item.Token != "", "has_refresh_token": item.RefreshToken != "", "has_password": item.Password != "", "has_login_extra": item.LoginExtra != ""})
 	}
@@ -368,6 +369,7 @@ func (a *App) saveAccount(c *gin.Context) {
 		account.Balance = nil
 		account.Used = nil
 		account.TodayUsed = nil
+		account.TodayCollectedAt = nil
 		account.TodayDate = ""
 		account.Status = "pending"
 	}

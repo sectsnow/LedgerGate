@@ -81,6 +81,63 @@ func TestAccountOverviewTotalsAndHistory(t *testing.T) {
 	}
 }
 
+func TestAccountOverviewConsumptionCollectionTime(t *testing.T) {
+	a := testApp(t)
+	now := time.Now()
+	earlier, later := now.Add(-10*time.Minute), now.Add(-time.Minute)
+	accounts := []Account{
+		{Name: "zero", Currency: "USD", TodayUsed: floatPointer(0), TodayDate: usageDay(now).Format("2006-01-02"), TodayCollectedAt: &later},
+		{Name: "older", Currency: "USD", TodayUsed: floatPointer(1), TodayDate: usageDay(now).Format("2006-01-02"), TodayCollectedAt: &earlier},
+		{Name: "previous-day", Currency: "USD", TodayUsed: floatPointer(99), TodayDate: "2000-01-01"},
+	}
+	if err := a.DB.Create(&accounts).Error; err != nil {
+		t.Fatal(err)
+	}
+	summaries, err := a.accountOverview(now)
+	if err != nil || len(summaries) != 1 || summaries[0].TodayCollectedAt == nil || !summaries[0].TodayCollectedAt.Equal(earlier) {
+		t.Fatal("summary did not use the earliest successful timestamp of today's included accounts", err)
+	}
+	for _, account := range accounts[:2] {
+		if err := a.DB.Model(&account).Update("today_collected_at", nil).Error; err != nil {
+			t.Fatal(err)
+		}
+		summaries, err = a.accountOverview(now)
+		if err != nil || summaries[0].TodayCollectedAt != nil {
+			t.Fatal("summary fabricated a complete timestamp when an included account's timestamp was unknown", err)
+		}
+		if err := a.DB.Model(&account).Update("today_collected_at", later).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestConsumptionTimestampUpgradePreservesExistingMoney(t *testing.T) {
+	config := Config{DataDir: t.TempDir(), AdminPassword: "test-password-12345"}
+	a, err := Open(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := Account{Name: "existing", Currency: "USD", TodayUsed: floatPointer(1.23), TodayDate: usageDay(time.Now()).Format("2006-01-02")}
+	if err := a.DB.Create(&account).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := a.DB.Migrator().DropColumn(&Account{}, "TodayCollectedAt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Close(); err != nil {
+		t.Fatal(err)
+	}
+	a, err = Open(config)
+	if err != nil {
+		t.Fatal("upgrade failed", err)
+	}
+	t.Cleanup(func() { a.Close() })
+	var saved Account
+	if err := a.DB.First(&saved, account.ID).Error; err != nil || saved.TodayUsed == nil || *saved.TodayUsed != 1.23 || saved.TodayDate != account.TodayDate || saved.TodayCollectedAt != nil {
+		t.Fatal("upgrade changed existing money or invented a collection time", err)
+	}
+}
+
 func TestAccountOverviewTimezoneAndZero(t *testing.T) {
 	a := testApp(t)
 	now := time.Date(2026, 11, 21, 1, 0, 0, 0, time.UTC)

@@ -29,11 +29,13 @@ func TestSub2APICumulativeCost(t *testing.T) {
 		{name: "failed_collection_preserves_cost", stats: `{}`, status: 503, previous: &previous, want: &previous, previousToday: floatPointer(0.3), wantToday: floatPointer(0.3), warning: true},
 		{name: "yesterday_cost_not_reused", stats: `{}`, status: 503, previous: &previous, want: &previous, previousToday: floatPointer(19), previousDate: usageDay(time.Now()).AddDate(0, 0, -1).Format("2006-01-02"), warning: true},
 		{name: "missing_cost_stays_unknown", stats: `{"data":{"today_actual_cost":1,"total_cost":562}}`, status: 200, wantToday: floatPointer(1), warning: true},
+		{name: "missing_today_preserves_value_and_time", stats: `{"data":{"total_actual_cost":42.25}}`, status: 200, previous: &previous, want: &previous, previousToday: floatPointer(0.3), wantToday: floatPointer(0.3), warning: true},
 		{name: "invalid_cost_preserves_previous", stats: `{"data":{"total_actual_cost":"unavailable"}}`, status: 200, previous: &previous, want: &previous, warning: true},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			a := testApp(t)
+			collectedAt := time.Now().Add(-10 * time.Minute).Truncate(time.Second)
 			h := a.Router()
 			cookie := loginForTest(t, h)
 			var statsCalls atomic.Int32
@@ -70,7 +72,7 @@ func TestSub2APICumulativeCost(t *testing.T) {
 				if date == "" {
 					date = usageDay(time.Now()).Format("2006-01-02")
 				}
-				if err := a.DB.Model(&Account{}).Where("id = ?", 1).Updates(map[string]any{"today_used": *test.previousToday, "today_date": date}).Error; err != nil {
+				if err := a.DB.Model(&Account{}).Where("id = ?", 1).Updates(map[string]any{"today_used": *test.previousToday, "today_date": date, "today_collected_at": collectedAt}).Error; err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -107,6 +109,23 @@ func TestSub2APICumulativeCost(t *testing.T) {
 				}
 			} else if account.TodayUsed == nil || *account.TodayUsed != *test.wantToday {
 				t.Fatalf("daily cost = %v, want %v", account.TodayUsed, *test.wantToday)
+			}
+			stats, _ := decodeJSON([]byte(test.stats))
+			_, hasToday := number(obj(obj(stats)["data"])["today_actual_cost"])
+			if test.status == 200 && hasToday {
+				if account.TodayCollectedAt == nil || !account.TodayCollectedAt.After(collectedAt) {
+					t.Fatal("successful daily consumption collection did not update its timestamp")
+				}
+			} else if test.previousToday != nil && test.previousDate == "" {
+				if account.TodayCollectedAt == nil || !account.TodayCollectedAt.Equal(collectedAt) {
+					t.Fatal("failed or missing daily consumption advanced the saved timestamp")
+				}
+			} else if account.TodayCollectedAt != nil {
+				t.Fatal("unknown or previous-day consumption has a fabricated collection timestamp")
+			}
+			var stored Account
+			if err := a.DB.First(&stored, account.ID).Error; err != nil || jsonString(stored.TodayCollectedAt) != jsonString(account.TodayCollectedAt) {
+				t.Fatal("daily consumption timestamp was not persisted", err)
 			}
 			response = call(h, "GET", "/api/accounts", "", cookie)
 			if response.Code != 200 || !strings.Contains(response.Body.String(), `"used":`+jsonString(account.Used)) {
@@ -168,7 +187,7 @@ func TestNewAPIDailyConsumption(t *testing.T) {
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &account) != nil {
 		t.Fatal(w.Body.String())
 	}
-	if dailyCalls.Load() != 1 || account.TodayUsed == nil || *account.TodayUsed != 0.25 || account.Used == nil || *account.Used != 1 || account.Warnings != "" {
+	if dailyCalls.Load() != 1 || account.TodayUsed == nil || *account.TodayUsed != 0.25 || account.TodayCollectedAt == nil || account.Used == nil || *account.Used != 1 || account.Warnings != "" {
 		t.Fatalf("wrong daily consumption %+v", account)
 	}
 }

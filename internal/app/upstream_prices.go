@@ -268,6 +268,7 @@ func upstreamRoutePrice(account Account, channel Channel, model string, catalog 
 	}
 	price = scaledPricing(price, factor)
 	price.MultiplierIncluded, price.AppliedMultiplier = true, &factor
+	price.RateGroupID = rate.GroupID
 	if strings.ToUpper(strings.TrimSpace(account.Currency)) != "USD" {
 		price.Reference, price.Note = true, "上游账户币种非 USD，此处展示站点美元参考价"
 	}
