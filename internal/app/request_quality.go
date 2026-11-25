@@ -1,29 +1,38 @@
 package app
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
 type qualityRow struct {
-	ID                    string   `json:"id"`
-	Name                  string   `json:"name"`
-	Requests              int64    `json:"requests"`
-	Successes             int64    `json:"successes"`
-	InputTokens           int64    `json:"input_tokens"`
-	OutputTokens          int64    `json:"output_tokens"`
-	CostMicros            int64    `json:"cost_micros"`
-	UnknownCosts          int64    `json:"unknown_costs"`
-	AverageDurationMS     *float64 `json:"average_duration_ms"`
-	AverageFirstTokenMS   *float64 `json:"average_first_token_ms"`
-	OutputPerSecond       *float64 `json:"output_per_second"`
-	ObservedRequests      int64    `json:"observed_requests"`
-	FirstAttemptSuccesses int64    `json:"first_attempt_successes"`
-	RetriedSuccesses      int64    `json:"retried_successes"`
-	FailedRequests        int64    `json:"failed_requests"`
-	AttemptOverheadMS     int64    `json:"attempt_overhead_ms"`
-	LastRequestUnix       int64    `json:"last_request_unix"`
+	ID                       string   `json:"id"`
+	Name                     string   `json:"name"`
+	Requests                 int64    `json:"requests"`
+	Successes                int64    `json:"successes"`
+	InputTokens              int64    `json:"input_tokens"`
+	OutputTokens             int64    `json:"output_tokens"`
+	CacheReadTokens          int64    `json:"cache_read_tokens"`
+	CacheWriteTokens         int64    `json:"cache_write_tokens"`
+	CacheWrite1hTokens       int64    `json:"cache_write_1h_tokens"`
+	CacheSampleRequests      int64    `json:"cache_sample_requests"`
+	CacheSampleInputTokens   int64    `json:"cache_sample_input_tokens"`
+	CacheSampleReadTokens    int64    `json:"cache_sample_read_tokens"`
+	CacheHitRequests         int64    `json:"cache_hit_requests"`
+	CacheWriteSampleRequests int64    `json:"cache_write_sample_requests"`
+	CostMicros               int64    `json:"cost_micros"`
+	UnknownCosts             int64    `json:"unknown_costs"`
+	AverageDurationMS        *float64 `json:"average_duration_ms"`
+	AverageFirstTokenMS      *float64 `json:"average_first_token_ms"`
+	OutputPerSecond          *float64 `json:"output_per_second"`
+	ObservedRequests         int64    `json:"observed_requests"`
+	FirstAttemptSuccesses    int64    `json:"first_attempt_successes"`
+	RetriedSuccesses         int64    `json:"retried_successes"`
+	FailedRequests           int64    `json:"failed_requests"`
+	AttemptOverheadMS        int64    `json:"attempt_overhead_ms"`
+	LastRequestUnix          int64    `json:"last_request_unix"`
 }
 
 func (a *App) requestQuality(c *gin.Context) {
@@ -62,6 +71,9 @@ func (a *App) requestQuality(c *gin.Context) {
 		Select(id + " AS id, " + label + ` AS name, SUM(requests) AS requests,
             SUM(successes) AS successes,
             COALESCE(SUM(input_tokens),0) AS input_tokens, COALESCE(SUM(output_tokens),0) AS output_tokens,
+			COALESCE(SUM(cache_read_tokens),0) AS cache_read_tokens, COALESCE(SUM(cache_write_tokens),0) AS cache_write_tokens, COALESCE(SUM(cache_write1h_tokens),0) AS cache_write1h_tokens,
+			COALESCE(SUM(cache_sample_requests),0) AS cache_sample_requests, COALESCE(SUM(cache_sample_input_tokens),0) AS cache_sample_input_tokens, COALESCE(SUM(cache_sample_read_tokens),0) AS cache_sample_read_tokens,
+			COALESCE(SUM(cache_hit_requests),0) AS cache_hit_requests, COALESCE(SUM(cache_write_sample_requests),0) AS cache_write_sample_requests,
 			COALESCE(SUM(cost_micros),0) AS cost_micros, SUM(cost_unknown_requests) AS unknown_costs,
 			1.0*SUM(duration_ms)/NULLIF(SUM(requests),0) AS average_duration_ms,
 			1.0*SUM(semantic_first_token_ms)/NULLIF(SUM(semantic_first_token_count),0) AS average_first_token_ms,
@@ -85,5 +97,34 @@ func (a *App) requestQuality(c *gin.Context) {
 		fail(c, 500, "读取渠道与模型统计失败")
 		return
 	}
-	c.JSON(200, object{"items": rows, "start": start, "end": end, "models": models})
+	result := object{"items": rows, "start": start, "end": end, "models": models}
+	if detail := c.Query("detail"); detail != "" || c.Query("include_insights") == "1" {
+		var channel *uint
+		var selectedModel *string
+		if model != "" {
+			selectedModel = &model
+		}
+		if group == "channel_id" {
+			id, err := strconv.ParseUint(detail, 10, 32)
+			if err != nil {
+				fail(c, 400, "渠道编号无效")
+				return
+			}
+			value := uint(id)
+			channel = &value
+		} else {
+			if len(detail) > 200 {
+				fail(c, 400, "模型筛选过长")
+				return
+			}
+			selectedModel = &detail
+		}
+		report, err := loadRequestInsights(a.DB.WithContext(c.Request.Context()), start, end, channel, selectedModel)
+		if err != nil {
+			fail(c, 500, "读取详细统计失败")
+			return
+		}
+		result["insights"] = report
+	}
+	c.JSON(200, result)
 }

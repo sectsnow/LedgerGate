@@ -5,8 +5,11 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-var requestDayColumns = []string{"requests", "errors", "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "cache_write1h_tokens", "cost_micros", "cost_unknown_requests"}
-var requestHourColumns = []string{"requests", "errors", "successes", "input_tokens", "output_tokens", "cost_micros", "cost_unknown_requests", "duration_ms", "first_token_ms", "first_token_count", "semantic_first_token_ms", "semantic_first_token_count", "generation_ms", "generation_tokens"}
+var requestDayColumns = []string{"requests", "errors", "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "cache_write1h_tokens", "cache_sample_requests", "cache_sample_input_tokens", "cache_sample_read_tokens", "cache_hit_requests", "cache_write_sample_requests", "cost_micros", "cost_unknown_requests"}
+var requestHourColumns = []string{"requests", "errors", "successes", "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "cache_write1h_tokens", "cache_sample_requests", "cache_sample_input_tokens", "cache_sample_read_tokens", "cache_hit_requests", "cache_write_sample_requests", "cost_micros", "cost_unknown_requests", "duration_ms", "first_token_ms", "first_token_count", "semantic_first_token_ms", "semantic_first_token_count", "generation_ms", "generation_tokens"}
+
+const cacheReadSampleSQL = `metrics_version > 0 AND usage_recorded AND usage_warning = '' AND input_tokens >= 0 AND cache_read_recorded AND cache_read_tokens >= 0 AND cache_read_tokens <= input_tokens`
+const cacheWriteSampleSQL = `metrics_version > 0 AND usage_recorded AND usage_warning = '' AND input_tokens >= 0 AND cache_write_recorded AND cache_write_tokens >= 0 AND cache_write_tokens <= input_tokens`
 
 func incrementSummary(tx *gorm.DB, row any, table string, keys []clause.Column, columns []string) error {
 	updates := map[string]any{}
@@ -20,6 +23,17 @@ func recordRequestUsage(tx *gorm.DB, log *RequestLog) error {
 	day := RequestDay{Date: usageDay(log.CreatedAt).Format("2006-01-02"), Requests: 1,
 		InputTokens: log.InputTokens, OutputTokens: log.OutputTokens, CacheReadTokens: log.CacheReadTokens,
 		CacheWriteTokens: log.CacheWriteTokens, CacheWrite1hTokens: log.CacheWrite1hTokens, CostMicros: log.CostMicros}
+	if log.MetricsVersion > 0 && log.UsageRecorded && log.UsageWarning == "" && log.InputTokens >= 0 {
+		if log.CacheReadRecorded && log.CacheReadTokens >= 0 && log.CacheReadTokens <= log.InputTokens {
+			day.CacheSampleRequests, day.CacheSampleInputTokens, day.CacheSampleReadTokens = 1, log.InputTokens, log.CacheReadTokens
+			if log.CacheReadTokens > 0 {
+				day.CacheHitRequests = 1
+			}
+		}
+		if log.CacheWriteRecorded && log.CacheWriteTokens >= 0 && log.CacheWriteTokens <= log.InputTokens {
+			day.CacheWriteSampleRequests = 1
+		}
+	}
 	if log.Status >= 400 {
 		day.Errors = 1
 	}
@@ -31,6 +45,9 @@ func recordRequestUsage(tx *gorm.DB, log *RequestLog) error {
 	}
 	hour := RequestHour{Hour: log.CreatedAt.Unix() / 3600 * 3600, ChannelID: log.ChannelID, ChannelName: log.ChannelName,
 		Model: log.Model, Requests: 1, Errors: day.Errors, InputTokens: day.InputTokens, OutputTokens: day.OutputTokens,
+		CacheReadTokens: day.CacheReadTokens, CacheWriteTokens: day.CacheWriteTokens, CacheWrite1hTokens: day.CacheWrite1hTokens,
+		CacheSampleRequests: day.CacheSampleRequests, CacheSampleInputTokens: day.CacheSampleInputTokens, CacheSampleReadTokens: day.CacheSampleReadTokens,
+		CacheHitRequests: day.CacheHitRequests, CacheWriteSampleRequests: day.CacheWriteSampleRequests,
 		CostMicros: day.CostMicros, CostUnknownRequests: day.CostUnknownRequests, DurationMS: log.DurationMS}
 	if log.Status >= 200 && log.Status < 400 {
 		hour.Successes = 1

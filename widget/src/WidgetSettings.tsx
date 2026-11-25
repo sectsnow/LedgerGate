@@ -44,7 +44,7 @@ export default function WidgetSettings({ version, reading, onReading, prefs, cur
       <label>内容密度<select value={reading.density} onChange={event => onReading({ ...reading, density: event.target.value as ReadingPrefs["density"] })}><option value="comfortable">舒适</option><option value="compact">紧凑</option></select></label>
       <label>文字大小<select value={reading.textSize} onChange={event => onReading({ ...reading, textSize: event.target.value as ReadingPrefs["textSize"] })}><option value="standard">标准</option><option value="large">大字</option></select></label>
       <button type="button" className="secondary" onClick={() => onReading({ ...reading, collapsed: [] })}>展开总览全部分区</button>
-      <p>总览分区可逐项折叠并记忆；金额默认显示两位小数，悬停查看完整精度。</p>
+      <p>总览及分析内部的小节可分别折叠并记忆；全部默认展开。金额默认显示两位小数，悬停查看完整精度。</p>
     </fieldset>
     <WidgetDisplaySettings prefs={prefs} currencies={currencies} open={displayOpen} onOpen={setDisplayOpen} onChange={onPrefs} onReset={onReset} />
     <fieldset><legend>启动与版本</legend>

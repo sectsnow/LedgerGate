@@ -8,6 +8,7 @@ on:
     paths:
       - "widget/**"
       - "web/package.json"
+      - "web/src/insightMetrics.ts"
       - ".github/workflows/widget-windows.yml"
 
 permissions:

@@ -83,7 +83,7 @@ func TestRequestCacheConcurrentFinishKeepsAllUsage(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			log := RequestLog{RequestID: fmt.Sprint(i), KeyID: key.ID, Status: 200, Model: "cached", CostMicros: 7, InputTokens: 10, OutputTokens: 2}
+			log := RequestLog{RequestID: fmt.Sprint(i), KeyID: key.ID, Status: 200, Model: "cached", CostMicros: 7, InputTokens: 10, OutputTokens: 2, MetricsVersion: 2, UsageRecorded: true, CacheReadRecorded: true, CacheReadTokens: 6}
 			trace := a.beginRequestTrace(&log)
 			trace.setRequest(log, object{"api_key": "hidden", "input": "hello"})
 			trace.appendResponse([]byte(`{"output":"world"}`))
@@ -99,11 +99,15 @@ func TestRequestCacheConcurrentFinishKeepsAllUsage(t *testing.T) {
 		t.Fatal("concurrent cache lost retention bounds", len(rows), active)
 	}
 	var day RequestDay
-	if err := a.DB.First(&day).Error; err != nil || day.Requests != 65 || day.CostMicros != 455 || day.InputTokens != 650 {
+	if err := a.DB.First(&day).Error; err != nil || day.Requests != 65 || day.CostMicros != 455 || day.InputTokens != 650 || day.CacheSampleRequests != 65 || day.CacheSampleInputTokens != 650 || day.CacheSampleReadTokens != 390 || day.CacheHitRequests != 65 {
 		t.Fatal("eviction lost or duplicated usage", day, err)
 	}
 	if err := a.DB.First(&key, key.ID).Error; err != nil || key.UsedMicros != 555 {
 		t.Fatal("eviction changed key budget", key, err)
+	}
+	report, err := loadRequestInsights(a.DB, time.Now().Add(-time.Hour), time.Now().Add(time.Hour), nil, nil)
+	if err != nil || report.Samples != 65 || report.Duration.Samples != 65 {
+		t.Fatal("concurrent completions lost distribution samples", report, err)
 	}
 	for _, table := range []any{&RequestLog{}, &RequestDetail{}} {
 		var count int64

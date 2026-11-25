@@ -27,6 +27,11 @@ func aggregateRequestDays(query *gorm.DB) ([]RequestDay, error) {
 		 COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
 		 COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
 		 COALESCE(SUM(cache_write1h_tokens), 0) AS cache_write1h_tokens,
+		 COALESCE(SUM(CASE WHEN ` + cacheReadSampleSQL + ` THEN 1 ELSE 0 END), 0) AS cache_sample_requests,
+		 COALESCE(SUM(CASE WHEN ` + cacheReadSampleSQL + ` THEN input_tokens ELSE 0 END), 0) AS cache_sample_input_tokens,
+		 COALESCE(SUM(CASE WHEN ` + cacheReadSampleSQL + ` THEN cache_read_tokens ELSE 0 END), 0) AS cache_sample_read_tokens,
+		 COALESCE(SUM(CASE WHEN ` + cacheReadSampleSQL + ` AND cache_read_tokens > 0 THEN 1 ELSE 0 END), 0) AS cache_hit_requests,
+		 COALESCE(SUM(CASE WHEN ` + cacheWriteSampleSQL + ` THEN 1 ELSE 0 END), 0) AS cache_write_sample_requests,
 		 COALESCE(SUM(CASE WHEN cost_status = 'unknown' THEN 0 ELSE cost_micros END), 0) AS cost_micros,
 		 COALESCE(SUM(CASE WHEN cost_status = 'unknown' OR state IN ('running', 'streaming') THEN 1 ELSE 0 END), 0) AS cost_unknown_requests`).
 		Group("date(created_at, '+8 hours')").Order("date").Scan(&rows).Error

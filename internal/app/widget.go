@@ -78,19 +78,35 @@ type widgetTrend struct {
 }
 
 type widgetPeriod struct {
-	Days                int           `json:"days"`
-	RetentionDays       int           `json:"retention_days"`
-	Requests            int64         `json:"requests"`
-	Errors              int64         `json:"errors"`
-	InputTokens         int64         `json:"input_tokens"`
-	OutputTokens        int64         `json:"output_tokens"`
-	CacheReadTokens     int64         `json:"cache_read_tokens"`
-	CacheWriteTokens    int64         `json:"cache_write_tokens"`
-	CostMicros          int64         `json:"cost_micros"`
-	CostUnknownRequests int64         `json:"cost_unknown_requests"`
-	Trend               []widgetTrend `json:"trend" gorm:"-"`
-	Models              []widgetRank  `json:"models" gorm:"-"`
-	Channels            []widgetRank  `json:"channels" gorm:"-"`
+	Insights                 *advancedReport `json:"insights" gorm:"-"`
+	Days                     int             `json:"days"`
+	RetentionDays            int             `json:"retention_days"`
+	Requests                 int64           `json:"requests"`
+	Errors                   int64           `json:"errors"`
+	InputTokens              int64           `json:"input_tokens"`
+	OutputTokens             int64           `json:"output_tokens"`
+	CacheReadTokens          int64           `json:"cache_read_tokens"`
+	CacheWriteTokens         int64           `json:"cache_write_tokens"`
+	CacheWrite1hTokens       int64           `json:"cache_write_1h_tokens"`
+	CacheSampleRequests      int64           `json:"cache_sample_requests"`
+	CacheSampleInputTokens   int64           `json:"cache_sample_input_tokens"`
+	CacheSampleReadTokens    int64           `json:"cache_sample_read_tokens"`
+	CacheHitRequests         int64           `json:"cache_hit_requests"`
+	CacheWriteSampleRequests int64           `json:"cache_write_sample_requests"`
+	Quality                  *widgetQuality  `json:"quality" gorm:"-"`
+	CostMicros               int64           `json:"cost_micros"`
+	CostUnknownRequests      int64           `json:"cost_unknown_requests"`
+	Trend                    []widgetTrend   `json:"trend" gorm:"-"`
+	Models                   []widgetRank    `json:"models" gorm:"-"`
+	Channels                 []widgetRank    `json:"channels" gorm:"-"`
+}
+
+type widgetQuality struct {
+	AttemptOverheadMS     int64 `json:"attempt_overhead_ms"`
+	ObservedRequests      int64 `json:"observed_requests"`
+	FirstAttemptSuccesses int64 `json:"first_attempt_successes"`
+	RetriedSuccesses      int64 `json:"retried_successes"`
+	FailedRequests        int64 `json:"failed_requests"`
 }
 
 func (a *App) widgetOverview(c *gin.Context) {
@@ -141,6 +157,10 @@ func (a *App) widgetOverview(c *gin.Context) {
 			Select(`COALESCE(SUM(requests),0) AS requests, COALESCE(SUM(errors),0) AS errors,
 				COALESCE(SUM(input_tokens),0) AS input_tokens, COALESCE(SUM(output_tokens),0) AS output_tokens,
 				COALESCE(SUM(cache_read_tokens),0) AS cache_read_tokens, COALESCE(SUM(cache_write_tokens),0) AS cache_write_tokens,
+				COALESCE(SUM(cache_write1h_tokens),0) AS cache_write1h_tokens,
+				COALESCE(SUM(cache_sample_requests),0) AS cache_sample_requests, COALESCE(SUM(cache_sample_input_tokens),0) AS cache_sample_input_tokens,
+				COALESCE(SUM(cache_sample_read_tokens),0) AS cache_sample_read_tokens, COALESCE(SUM(cache_hit_requests),0) AS cache_hit_requests,
+				COALESCE(SUM(cache_write_sample_requests),0) AS cache_write_sample_requests,
 				COALESCE(SUM(cost_micros),0) AS cost_micros, COALESCE(SUM(cost_unknown_requests),0) AS cost_unknown_requests`).Scan(&period).Error; err != nil {
 			return err
 		}
@@ -165,6 +185,16 @@ func (a *App) widgetOverview(c *gin.Context) {
 			period.Trend = append(period.Trend, row)
 		}
 		period.Models, period.Channels = []widgetRank{}, []widgetRank{}
+		period.Quality = &widgetQuality{}
+		if err := tx.Model(&RequestHour{}).Where("hour >= ? AND hour < ?", start.Unix(), todayStart.AddDate(0, 0, 1).Unix()).
+			Select("COALESCE(SUM(observed_requests),0) AS observed_requests, COALESCE(SUM(first_attempt_successes),0) AS first_attempt_successes, COALESCE(SUM(retried_successes),0) AS retried_successes, COALESCE(SUM(failed_requests),0) AS failed_requests, COALESCE(SUM(attempt_overhead_ms),0) AS attempt_overhead_ms").Scan(period.Quality).Error; err != nil {
+			return err
+		}
+		var err error
+		period.Insights, err = loadRequestInsights(tx, start, todayStart.AddDate(0, 0, 1), nil, nil)
+		if err != nil {
+			return err
+		}
 		ranking := tx.Model(&RequestHour{}).Where("hour >= ? AND hour < ?", start.Unix(), todayStart.AddDate(0, 0, 1).Unix())
 		if err := ranking.Select("COALESCE(NULLIF(model,''),'未指定模型') AS name, SUM(requests) AS requests, SUM(input_tokens + output_tokens) AS tokens").
 			Group("model").Order("tokens DESC, requests DESC, name ASC").Limit(5).Scan(&period.Models).Error; err != nil {

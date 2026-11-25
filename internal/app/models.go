@@ -190,43 +190,57 @@ type RequestDetail struct {
 }
 
 type RequestDay struct {
-	Date                string `json:"date" gorm:"primaryKey;size:10"`
-	Requests            int64  `json:"requests"`
-	Errors              int64  `json:"errors"`
-	InputTokens         int64  `json:"input_tokens"`
-	OutputTokens        int64  `json:"output_tokens"`
-	CacheReadTokens     int64  `json:"cache_read_tokens"`
-	CacheWriteTokens    int64  `json:"cache_write_tokens"`
-	CacheWrite1hTokens  int64  `json:"cache_write_1h_tokens"`
-	CostMicros          int64  `json:"cost_micros"`
-	CostUnknownRequests int64  `json:"cost_unknown_requests"`
+	Date                     string `json:"date" gorm:"primaryKey;size:10"`
+	Requests                 int64  `json:"requests"`
+	Errors                   int64  `json:"errors"`
+	InputTokens              int64  `json:"input_tokens"`
+	OutputTokens             int64  `json:"output_tokens"`
+	CacheReadTokens          int64  `json:"cache_read_tokens"`
+	CacheWriteTokens         int64  `json:"cache_write_tokens"`
+	CacheWrite1hTokens       int64  `json:"cache_write_1h_tokens"`
+	CacheSampleRequests      int64  `json:"cache_sample_requests" gorm:"not null;default:0"`
+	CacheSampleInputTokens   int64  `json:"cache_sample_input_tokens" gorm:"not null;default:0"`
+	CacheSampleReadTokens    int64  `json:"cache_sample_read_tokens" gorm:"not null;default:0"`
+	CacheHitRequests         int64  `json:"cache_hit_requests" gorm:"not null;default:0"`
+	CacheWriteSampleRequests int64  `json:"cache_write_sample_requests" gorm:"not null;default:0"`
+	CostMicros               int64  `json:"cost_micros"`
+	CostUnknownRequests      int64  `json:"cost_unknown_requests"`
 }
 
 type RequestHour struct {
-	Hour                    int64  `gorm:"primaryKey;autoIncrement:false"`
-	ChannelID               uint   `gorm:"primaryKey;autoIncrement:false"`
-	Model                   string `gorm:"primaryKey"`
-	ChannelName             string
-	Requests                int64
-	Errors                  int64
-	Successes               int64
-	InputTokens             int64
-	OutputTokens            int64
-	CostMicros              int64
-	CostUnknownRequests     int64
-	DurationMS              int64
-	FirstTokenMS            int64
-	FirstTokenCount         int64
-	SemanticFirstTokenMS    int64 `gorm:"not null;default:0"`
-	SemanticFirstTokenCount int64 `gorm:"not null;default:0"`
-	GenerationMS            int64
-	GenerationTokens        int64
-	ObservedRequests        int64 `gorm:"not null;default:0"`
-	FirstAttemptSuccesses   int64 `gorm:"not null;default:0"`
-	RetriedSuccesses        int64 `gorm:"not null;default:0"`
-	FailedRequests          int64 `gorm:"not null;default:0"`
-	AttemptOverheadMS       int64 `gorm:"not null;default:0"`
-	LastRequestUnix         int64 `json:"last_request_unix"`
+	Insights                 string `gorm:"not null;default:'{}'"`
+	Hour                     int64  `gorm:"primaryKey;autoIncrement:false"`
+	ChannelID                uint   `gorm:"primaryKey;autoIncrement:false"`
+	Model                    string `gorm:"primaryKey"`
+	ChannelName              string
+	Requests                 int64
+	Errors                   int64
+	Successes                int64
+	InputTokens              int64
+	OutputTokens             int64
+	CacheReadTokens          int64 `gorm:"not null;default:0"`
+	CacheWriteTokens         int64 `gorm:"not null;default:0"`
+	CacheWrite1hTokens       int64 `gorm:"not null;default:0"`
+	CacheSampleRequests      int64 `gorm:"not null;default:0"`
+	CacheSampleInputTokens   int64 `gorm:"not null;default:0"`
+	CacheSampleReadTokens    int64 `gorm:"not null;default:0"`
+	CacheHitRequests         int64 `gorm:"not null;default:0"`
+	CacheWriteSampleRequests int64 `gorm:"not null;default:0"`
+	CostMicros               int64
+	CostUnknownRequests      int64
+	DurationMS               int64
+	FirstTokenMS             int64
+	FirstTokenCount          int64
+	SemanticFirstTokenMS     int64 `gorm:"not null;default:0"`
+	SemanticFirstTokenCount  int64 `gorm:"not null;default:0"`
+	GenerationMS             int64
+	GenerationTokens         int64
+	ObservedRequests         int64 `gorm:"not null;default:0"`
+	FirstAttemptSuccesses    int64 `gorm:"not null;default:0"`
+	RetriedSuccesses         int64 `gorm:"not null;default:0"`
+	FailedRequests           int64 `gorm:"not null;default:0"`
+	AttemptOverheadMS        int64 `gorm:"not null;default:0"`
+	LastRequestUnix          int64 `json:"last_request_unix"`
 }
 
 type Alert struct {

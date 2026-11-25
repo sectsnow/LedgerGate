@@ -6,5 +6,33 @@
 .account-collection ol { padding-left: 18px; max-height: 250px; overflow: auto; }
 .account-collection li { margin: 10px 0; line-height: 1.6; }
 .account-collection li p { margin: 2px 0; }
-.quality-panel select { max-width: 280px; }
-@media (max-width: 600px) { .quality-panel select {max-width: 180px;} }
+.quality-filters { display: grid; grid-template-columns: minmax(0, 280px) minmax(0, 160px); gap: 16px; padding: 0 24px 18px; color: var(--text-muted); }
+.quality-views { padding: 0 24px 18px; }
+.quality-views .balance-period { width: fit-content; max-width: 100%; flex-wrap: wrap; }
+.quality-detail-link { display: block; margin-top: 6px; padding: 0; border: 0; background: transparent; color: var(--accent); font-size: 11px; }
+.insight-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 20px 24px 0; flex-wrap: wrap; }
+.insight-heading h3, .request-insights h3 { font-size: 13px; }
+.request-insights { padding: 0 24px 22px; }
+.request-insights h3 { margin: 20px 0 12px; }
+.insight-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
+.insight-grid > div { display: grid; gap: 7px; min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
+.insight-grid span, .insight-grid small, .insight-note { color: var(--text-muted); font-size: 11px; line-height: 1.8; }
+.insight-grid strong { font-size: 13px; overflow-wrap: anywhere; }
+.insight-note { margin: 12px 0; }
+.insight-errors { padding: 0; list-style: none; display: grid; gap: 8px; font-size: 12px; }
+.insight-errors li { display: flex; justify-content: space-between; gap: 12px; }
+.cache-trend-svg { display: block; width: 100%; height: auto; }
+.cache-trend-svg line { stroke: var(--border); }
+.cache-trend-svg text { fill: var(--text-muted); font-size: 8px; }
+.cache-trend-svg path { fill: none; stroke: var(--accent); stroke-width: 2; }
+.cache-trend-svg circle { fill: var(--accent); }
+.request-insights summary { cursor: pointer; color: var(--accent); font-size: 12px; }
+@media (max-width: 850px) { .insight-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media (max-width: 580px) {
+  .quality-filters { grid-template-columns: minmax(0, 1fr); padding-inline: 18px; }
+  .quality-panel .quality-note { padding-inline: 18px; }
+  .quality-views { padding-inline: 18px; }
+  .request-insights { padding-inline: 18px; }
+  .insight-heading { padding-inline: 18px; }
+  .insight-grid { grid-template-columns: minmax(0,1fr); }
+}

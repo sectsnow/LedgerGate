@@ -2,8 +2,8 @@
 mod desktop_display;
 
 use ledgergate_widget::{
-    connection_status, fetch_overview, load_connection, save_connection, ConnectionStatus,
-    WidgetOverview,
+    connection_status, dashboard_url, fetch_overview, load_connection, save_connection,
+    ConnectionStatus, WidgetOverview,
 };
 use std::path::PathBuf;
 use tauri::{
@@ -43,13 +43,16 @@ async fn get_overview(app: tauri::AppHandle, days: u8) -> Result<WidgetOverview,
 }
 
 #[tauri::command]
-fn open_dashboard(app: tauri::AppHandle) -> Result<(), String> {
+fn open_dashboard(app: tauri::AppHandle, page: Option<String>) -> Result<(), String> {
     let status = connection_status(&settings_path(&app)?)?;
     if status.server.is_empty() {
         return Err("请先配置 LedgerGate 地址".into());
     }
     app.opener()
-        .open_url(status.server, None::<&str>)
+        .open_url(
+            dashboard_url(&status.server, page.as_deref())?,
+            None::<&str>,
+        )
         .map_err(|_| "无法打开 LedgerGate 控制台".into())
 }
 

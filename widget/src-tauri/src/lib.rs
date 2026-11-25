@@ -72,7 +72,73 @@ pub struct WidgetTrend {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct WidgetQuality {
+    observed_requests: i64,
+    first_attempt_successes: i64,
+    retried_successes: i64,
+    failed_requests: i64,
+    #[serde(default)]
+    attempt_overhead_ms: Option<i64>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct LatencyPercentiles {
+    samples: i64,
+    p50_ms: Option<i64>,
+    p95_ms: Option<i64>,
+}
+#[derive(Serialize, Deserialize)]
+pub struct CacheLatency {
+    samples: i64,
+    duration_ms: i64,
+    first_samples: i64,
+    first_ms: i64,
+}
+#[derive(Serialize, Deserialize)]
+pub struct CacheComparison {
+    channel_id: u64,
+    channel: String,
+    model: String,
+    stream: bool,
+    hit: CacheLatency,
+    miss: CacheLatency,
+}
+#[derive(Serialize, Deserialize)]
+pub struct InsightTrend {
+    date: String,
+    samples: i64,
+    input_tokens: i64,
+    read_tokens: i64,
+}
+#[derive(Serialize, Deserialize)]
+pub struct ErrorCount {
+    name: String,
+    count: i64,
+}
+#[derive(Serialize, Deserialize)]
+pub struct AdvancedReport {
+    #[serde(default)]
+    requests: Option<i64>,
+    samples: i64,
+    duration: LatencyPercentiles,
+    first: LatencyPercentiles,
+    retry_eligible: i64,
+    retry_rescued: i64,
+    wait_samples: i64,
+    wait_ms: i64,
+    savings_samples: i64,
+    baseline_micros: i64,
+    actual_micros: i64,
+    errors: Vec<ErrorCount>,
+    comparisons: Vec<CacheComparison>,
+    comparison_total: u64,
+    trend: Vec<InsightTrend>,
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct WidgetPeriod {
+    #[serde(default)]
+    insights: Option<AdvancedReport>,
     days: u8,
     retention_days: i64,
     requests: i64,
@@ -81,6 +147,20 @@ pub struct WidgetPeriod {
     output_tokens: i64,
     cache_read_tokens: i64,
     cache_write_tokens: i64,
+    #[serde(default)]
+    cache_write_1h_tokens: Option<i64>,
+    #[serde(default)]
+    cache_sample_requests: Option<i64>,
+    #[serde(default)]
+    cache_sample_input_tokens: Option<i64>,
+    #[serde(default)]
+    cache_sample_read_tokens: Option<i64>,
+    #[serde(default)]
+    cache_hit_requests: Option<i64>,
+    #[serde(default)]
+    cache_write_sample_requests: Option<i64>,
+    #[serde(default)]
+    quality: Option<WidgetQuality>,
     cost_micros: i64,
     cost_unknown_requests: i64,
     #[serde(default)]
@@ -115,6 +195,29 @@ fn normalize_server(server: &str) -> Result<String, String> {
         return Err("地址须为 HTTP 或 HTTPS，且不能包含用户名、密码、查询参数或片段".into());
     }
     Ok(url.as_str().trim_end_matches('/').to_owned())
+}
+
+pub fn dashboard_url(server: &str, page: Option<&str>) -> Result<String, String> {
+    let server = normalize_server(server)?;
+    match page {
+        None => Ok(server),
+        Some(page)
+            if matches!(
+                page,
+                "overview"
+                    | "accounts"
+                    | "requests"
+                    | "analytics/summary"
+                    | "analytics/cache"
+                    | "analytics/stability"
+                    | "analytics/cost"
+                    | "monitor/alerts"
+            ) =>
+        {
+            Ok(format!("{server}/#{page}"))
+        }
+        Some(_) => Err("不支持的控制台页面".into()),
+    }
 }
 
 fn validate_token(token: &str) -> Result<(), String> {
@@ -249,6 +352,43 @@ mod tests {
     };
 
     #[test]
+    fn dashboard_links_keep_configured_origin_and_prefix() {
+        assert_eq!(
+            dashboard_url("https://example.test/prefix/", Some("analytics/cache")).unwrap(),
+            "https://example.test/prefix/#analytics/cache"
+        );
+        assert_eq!(
+            dashboard_url("http://localhost:8080", None).unwrap(),
+            "http://localhost:8080"
+        );
+        for page in [
+            "overview",
+            "accounts",
+            "requests",
+            "analytics/summary",
+            "analytics/cache",
+            "analytics/stability",
+            "analytics/cost",
+            "monitor/alerts",
+        ] {
+            assert!(dashboard_url("https://example.test", Some(page))
+                .unwrap()
+                .starts_with("https://example.test/#"));
+        }
+        for page in [
+            "https://evil.test",
+            "//evil.test",
+            "javascript:alert(1)",
+            "analytics/cache?token=secret",
+            "",
+            "../",
+        ] {
+            assert!(dashboard_url("https://example.test", Some(page)).is_err());
+        }
+        assert!(dashboard_url("file:///tmp/a", Some("overview")).is_err());
+    }
+
+    #[test]
     fn connection_validation_rejects_unsafe_urls_and_tokens() {
         assert_eq!(
             normalize_server("https://example.test/prefix/").unwrap(),
@@ -281,6 +421,25 @@ mod tests {
         assert_eq!(period.trend[1].requests, 3);
         assert_eq!(period.models[0].name, "model-a");
         assert_eq!(period.channels[0].tokens, 120);
+        assert!(period.cache_sample_requests.is_none());
+        assert!(period.quality.is_none());
+        let mut value: serde_json::Value = serde_json::from_str(body).unwrap();
+        value["period"]["cache_sample_requests"] = 2.into();
+        value["period"]["cache_sample_input_tokens"] = 80.into();
+        value["period"]["cache_sample_read_tokens"] = 40.into();
+        value["period"]["cache_hit_requests"] = 1.into();
+        value["period"]["cache_write_sample_requests"] = 1.into();
+        value["period"]["cache_write_1h_tokens"] = 3.into();
+        value["period"]["quality"] = serde_json::json!({"observed_requests":2,"first_attempt_successes":1,"retried_successes":1,"failed_requests":0});
+        value["period"]["insights"] = serde_json::json!({"samples":2,"duration":{"samples":2,"p50_ms":100,"p95_ms":200},"first":{"samples":0,"p50_ms":null,"p95_ms":null},"retry_eligible":1,"retry_rescued":1,"wait_samples":2,"wait_ms":500,"savings_samples":1,"baseline_micros":100,"actual_micros":120,"errors":[{"name":"请求等待超时","count":1}],"comparisons":[],"comparison_total":0,"trend":[{"date":"2026-11-25","samples":1,"input_tokens":100,"read_tokens":40}]});
+        let overview: WidgetOverview = serde_json::from_value(value).unwrap();
+        let encoded = serde_json::to_value(overview).unwrap();
+        assert_eq!(encoded["period"]["cache_sample_read_tokens"], 40);
+        assert_eq!(encoded["period"]["cache_write_1h_tokens"], 3);
+        assert_eq!(encoded["period"]["quality"]["first_attempt_successes"], 1);
+        assert_eq!(encoded["period"]["insights"]["duration"]["p95_ms"], 200);
+        assert!(encoded["period"]["insights"]["first"]["p50_ms"].is_null());
+        assert_eq!(encoded["period"]["insights"]["actual_micros"], 120);
     }
 
     #[test]

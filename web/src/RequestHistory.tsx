@@ -96,6 +96,14 @@ export function RequestList({ rows, channels, small, dialog, summaryOnly = false
   </>;
 }
 
+export function RequestPreview({rows,dialog:Dialog}:{rows:RequestLog[];dialog:DialogComponent}) {
+  const [selected,setSelected]=useState<number|null>(null);
+  return <><div className="table-scroll"><table className="request-preview"><thead><tr><th>开始时间</th><th>模型／渠道</th><th>状态</th><th>Token</th><th>总耗时</th><th>费用估算</th><th>详情</th></tr></thead><tbody>
+    {rows.map(row=>{const known=!row.metrics_version || row.usage_recorded && !row.usage_warning;const costKnown=row.cost_status!=="unknown" && (known || row.cost_detail?.mode==="request");return <tr key={row.id}><td>{new Date(row.started_at||row.created_at).toLocaleTimeString("zh-CN",{hour12:false,timeZone:"Asia/Shanghai"})}</td><td><strong title={row.model}>{row.model||"未指定模型"}</strong><small className="table-sub" title={row.channel_name}>{row.channel_name||"未选择渠道"}</small></td><td>{row.state==="streaming" ? "输出中" : active(row) ? "进行中" : row.status===499 ? "客户端断开" : row.status>=400 ? "失败" : "已完成"}</td><td>{known ? (row.input_tokens+row.output_tokens).toLocaleString("zh-CN") : active(row) ? "等待用量" : "未提供"}</td><td>{(row.duration_ms/1000).toFixed(2)} 秒</td><td>{costKnown ? `$${(row.cost_micros/1e6).toFixed(6)}` : active(row) ? "等待核算" : "未知"}</td><td><button className="text-button" aria-label={`查看请求 ${row.request_id}`} onClick={()=>setSelected(row.id)}>查看</button></td></tr>})}
+    {!rows.length && <tr><td colSpan={7}>暂无请求记录</td></tr>}
+  </tbody></table></div>{selected!==null && <Detail key={selected} id={selected} dialog={Dialog} close={()=>setSelected(null)}/>}</>;
+}
+
 export default function RequestHistory({ channels, dialog }: { channels: ChannelRow[]; dialog: DialogComponent }) {
   const [summaryOnly, setSummaryOnly] = useState(false), [page, setPage] = useState(1);
   const [draft, setDraft] = useState("");

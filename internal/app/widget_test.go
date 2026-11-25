@@ -103,7 +103,7 @@ func TestWidgetPeriodTotalsAndRankings(t *testing.T) {
 	}
 	today := usageDay(time.Now())
 	days := []RequestDay{
-		{Date: today.Format("2006-01-02"), Requests: 2, Errors: 1, InputTokens: 100, OutputTokens: 20, CacheReadTokens: 30, CacheWriteTokens: 5, CostMicros: 200000, CostUnknownRequests: 1},
+		{Date: today.Format("2006-01-02"), Requests: 2, Errors: 1, InputTokens: 100, OutputTokens: 20, CacheReadTokens: 30, CacheWriteTokens: 5, CacheWrite1hTokens: 2, CacheSampleRequests: 1, CacheSampleInputTokens: 40, CacheSampleReadTokens: 20, CacheHitRequests: 1, CacheWriteSampleRequests: 1, CostMicros: 200000, CostUnknownRequests: 1},
 		{Date: today.AddDate(0, 0, -1).Format("2006-01-02"), Requests: 2, InputTokens: 100, OutputTokens: 30, CacheReadTokens: 10, CostMicros: 100000},
 		{Date: today.AddDate(0, 0, -8).Format("2006-01-02"), Requests: 1, InputTokens: 80, OutputTokens: 20},
 		{Date: today.AddDate(0, 0, -30).Format("2006-01-02"), Requests: 99, InputTokens: 9999},
@@ -112,8 +112,8 @@ func TestWidgetPeriodTotalsAndRankings(t *testing.T) {
 		t.Fatal(err)
 	}
 	hours := []RequestHour{
-		{Hour: today.Add(time.Hour).Unix(), ChannelID: 1, ChannelName: "主渠道", Model: "alpha", Requests: 2, InputTokens: 100, OutputTokens: 20},
-		{Hour: today.AddDate(0, 0, -1).Add(time.Hour).Unix(), ChannelID: 1, ChannelName: "主渠道", Model: "alpha", Requests: 1, InputTokens: 40, OutputTokens: 10},
+		{Hour: today.Add(time.Hour).Unix(), ChannelID: 1, ChannelName: "主渠道", Model: "alpha", Requests: 2, InputTokens: 100, OutputTokens: 20, ObservedRequests: 2, FirstAttemptSuccesses: 1, FailedRequests: 1},
+		{Hour: today.AddDate(0, 0, -1).Add(time.Hour).Unix(), ChannelID: 1, ChannelName: "主渠道", Model: "alpha", Requests: 1, InputTokens: 40, OutputTokens: 10, ObservedRequests: 1, RetriedSuccesses: 1},
 		{Hour: today.AddDate(0, 0, -1).Add(time.Hour).Unix(), ChannelID: 2, ChannelName: "备用渠道", Model: "beta", Requests: 1, InputTokens: 60, OutputTokens: 20},
 		{Hour: today.AddDate(0, 0, -8).Add(time.Hour).Unix(), ChannelID: 2, ChannelName: "备用渠道", Model: "beta", Requests: 1, InputTokens: 80, OutputTokens: 20},
 	}
@@ -133,6 +133,9 @@ func TestWidgetPeriodTotalsAndRankings(t *testing.T) {
 		return body.Period
 	}
 	week := read("?days=7")
+	if week.CacheSampleRequests != 1 || week.CacheSampleInputTokens != 40 || week.CacheSampleReadTokens != 20 || week.CacheHitRequests != 1 || week.CacheWriteSampleRequests != 1 || week.CacheWrite1hTokens != 2 || week.Quality == nil || week.Quality.ObservedRequests != 3 || week.Quality.FirstAttemptSuccesses != 1 || week.Quality.RetriedSuccesses != 1 || week.Quality.FailedRequests != 1 {
+		t.Fatalf("cache and quality samples lost or historical records counted as known: %+v, %+v", week, week.Quality)
+	}
 	if week.Days != 7 || week.RetentionDays != 7 || week.Requests != 4 || week.Errors != 1 || week.InputTokens != 200 || week.OutputTokens != 50 || week.CacheReadTokens != 40 || week.CacheWriteTokens != 5 || week.CostMicros != 300000 || week.CostUnknownRequests != 1 {
 		t.Fatalf("unexpected weekly totals: %+v", week)
 	}

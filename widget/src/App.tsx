@@ -3,11 +3,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ArrowUpRight, Check, LoaderCircle, Palette, Pin, Minimize2, RefreshCw, Settings, X } from "lucide-react";
 import logo from "../src-tauri/icons/icon.png";
-import { accountNotes, finances, type Overview, type Trend } from "./summary";
+import { finances, percentage, periodMetrics, type Overview, type Trend } from "./summary";
+import { widgetAlerts } from "./alerts";
+import { dashboardPages, type DashboardPage } from "./dashboard";
 import useWidgetDisplay from "./useWidgetDisplay";
 import WidgetBadge from "./WidgetBadge";
 import WidgetSettings from "./WidgetSettings";
 import AccountAssets from "./AccountAssets";
+import UsageInsights from "./UsageInsights";
 import OverviewSection from "./OverviewSection";
 import { parseReadingPrefs, READING_KEY, type SectionId } from "./reading";
 
@@ -70,6 +73,9 @@ export default function App() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [lastSuccess, setLastSuccess] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const openDashboard = useCallback((page: DashboardPage) => {
+    void invoke("open_dashboard", {page}).catch(reason => setError(String(reason)));
+  }, []);
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -227,6 +233,7 @@ export default function App() {
   const groups = overview ? finances(overview) : [];
   const legacy = !!overview && !overview.period;
   const period = overview?.period?.days === days ? overview.period : null;
+  const metrics = period ? periodMetrics(period) : null;
   const input = period?.input_tokens ?? (legacy && days === 1 ? overview?.input_tokens : null);
   const output = period?.output_tokens ?? (legacy && days === 1 ? overview?.output_tokens : null);
   const requests = period?.requests ?? (legacy && days === 1 ? overview?.requests : null);
@@ -234,17 +241,8 @@ export default function App() {
     ? `$${(period.cost_micros / 1_000_000).toLocaleString("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 6 })}` : "—";
   const averageTokens = period && period.requests > 0 ? Math.round((period.input_tokens + period.output_tokens) / period.requests) : null;
   const errorRate = period && period.requests > 0 ? `${((period.errors / period.requests) * 100).toLocaleString("zh-CN", { maximumFractionDigits: 1 })}%` : "—";
-  const alerts: { tone: "danger" | "warning" | "info"; title: string; detail: string }[] = [];
-  if (error) alerts.push({ tone: "danger", title: "连接异常", detail: error });
-  const today = new Date(now + 8 * 3600_000).toISOString().slice(0, 10);
-  const problemCount = overview?.accounts.filter(account => accountNotes(account, today, now).length).length ?? 0;
-  const snapshotStale = !!overview && (!!lastSuccess && now - lastSuccess > 90_000 || overview.date !== today);
-  if (problemCount) alerts.push({ tone: "warning", title: "账户状态提醒", detail: `${problemCount} 个账户存在低余额、未采集、暂停、超时或异常项目，可在账户资产中展开采集详情` });
-  if (snapshotStale) alerts.push({ tone: "warning", title: "旧数据", detail: "超过 90 秒未成功获取或已跨日，当前展示上次快照" });
-  if (period?.errors) alerts.push({ tone: "warning", title: "请求错误", detail: `当前周期有 ${count(period.errors)} 次请求返回错误，错误率 ${errorRate}` });
-  if (period?.cost_unknown_requests) alerts.push({ tone: "warning", title: "费用未完整核算", detail: `${count(period.cost_unknown_requests)} 次请求缺少有效费用或用量信息` });
-  if (period && period.retention_days < days) alerts.push({ tone: "info", title: "统计周期不完整", detail: `当前只保留 ${period.retention_days} 天汇总，无法覆盖完整的近 ${days} 天` });
-  if (legacy) alerts.push({ tone: "info", title: "服务版本较旧", detail: "升级 LedgerGate 后可获取趋势、分析和排行数据" });
+  const {issues, notes, snapshotStale} = widgetAlerts(overview, days, error || display.error, lastSuccess, now);
+  const attentionCount = issues.length;
   if (display.mode === "badge" && connection?.configured) return <WidgetBadge overview={overview} lastSuccess={lastSuccess} error={error || display.error} prefs={display.prefs} theme={theme} busy={display.busy}
     onPrefs={display.updatePrefs} onExpand={display.expand} onHide={display.hide} onReset={display.reset}
     onSettings={() => { void display.expand().then(() => setSettingsOpen(true)); }} />;
@@ -277,44 +275,43 @@ export default function App() {
       <section className="content" aria-label="运行概览">
         <div className="content-body" ref={contentBody}>
         {settingsOpen ? <WidgetSettings version={version} reading={reading} onReading={setReading} prefs={display.prefs} currencies={groups.map(group => group.currency)} onPrefs={display.updatePrefs} onReset={display.reset} onClose={closeSettings} onConnection={() => { setSettingsOpen(false); setEditing(true); setError(""); setToken(""); }} /> : <>
-        <div className="view-tabs" role="tablist" aria-label="显示内容">{views.map(item => <button key={item} type="button" role="tab" className={view === item ? "selected" : ""} aria-selected={view === item} onClick={() => setView(item)}>{viewLabels[item]}</button>)}</div>
-        {alerts.length > 0 && view !== "alerts" && <button type="button" className="attention-banner" onClick={() => {
-          if (view !== "overview") { setView("alerts"); return; }
-          collapseSection("alerts", false);
-          requestAnimationFrame(() => document.getElementById("section-alerts")?.scrollIntoView({ block: "start" }));
-        }}>有 {alerts.length} 项需要关注 · 点击查看</button>}
+        <div className="view-tabs" role="tablist" aria-label="显示内容">{views.map(item => <button key={item} type="button" role="tab" className={view === item ? "selected" : ""} aria-selected={view === item} onClick={() => setView(item)}>{viewLabels[item]}{item === "alerts" && attentionCount > 0 && <span className="alert-count" aria-label={`${attentionCount} 项提醒`}>{attentionCount}</span>}</button>)}</div>
         {(view === "overview" || view === "accounts") && <OverviewSection id="assets" title="账户资产" meta={"上游采集 · 今日消费"} collapsible={view === "overview"} collapsed={reading.collapsed.includes("assets")} onCollapse={collapseSection}>
           <AccountAssets overview={overview} now={now} />
+          <button type="button" className="section-open" onClick={()=>openDashboard("accounts")}>在控制台查看账户 →</button>
         </OverviewSection>}
         {view !== "accounts" && <div className="period-bar"><div><span className="eyebrow">{view === "ranking" ? "排行统计" : view === "analysis" ? "用量分析" : "统计周期"}</span><small className="period-date">{overview ? `${overview.date} · 北京时间` : "北京时间"}</small></div><div className="period-tabs" role="group" aria-label="统计周期">{([[1, "今日"], [7, "近 7 天"], [30, "近 30 天"]] as const).map(([value, label]) => <button key={value} type="button" className={days === value ? "selected" : ""} aria-pressed={days === value} disabled={legacy && value !== 1} onClick={() => setDays(value)}>{label}</button>)}</div></div>}
         {view === "overview" && <OverviewSection id="usage" title="用量概览" meta={days === 1 ? "今日" : `近 ${days} 天`} collapsible={view === "overview"} collapsed={reading.collapsed.includes("usage")} onCollapse={collapseSection}>
           <div className="hero"><span>Token 总量</span><strong>{input != null && output != null ? count(input + output) : "—"}</strong><small>{input != null && output != null ? `输入 ${count(input)}  ·  输出 ${count(output)}` : "等待读取用量"}</small></div>
           <div className="quick-stats"><div><span>请求</span><strong>{requests != null ? count(requests) : "—"}</strong></div><div><span>错误</span><strong>{period ? count(period.errors) : "—"}</strong></div><div><span>费用估算</span><strong>{estimatedCost}</strong></div></div>
+          {metrics && <div className="quick-stats"><div title="仅代表有效缓存样本；覆盖率见下方分析区。"><span>缓存命中率</span><strong>{percentage(metrics.cacheHitRate)}</strong></div><div title="仅代表有尝试统计的请求；覆盖率见下方分析区。"><span>首次成功率</span><strong>{percentage(metrics.firstSuccessRate)}</strong></div><div><span>费用覆盖率</span><strong>{percentage(metrics.costCoverage)}</strong></div></div>}
           {period && <p className="detail-line">缓存读取 {count(period.cache_read_tokens)} · 写入 {count(period.cache_write_tokens)}{period.cost_unknown_requests > 0 && ` · ${count(period.cost_unknown_requests)} 次费用未知`}</p>}
           {period && period.retention_days < days && <p className="notice">请求汇总保留 {period.retention_days} 天，当前周期可能不完整。</p>}
           {legacy && <p className="notice">当前服务仅支持今日概览，升级 LedgerGate 后可查看周期汇总和排行。</p>}
         </OverviewSection>}
-        {(view === "overview" || view === "alerts") && <OverviewSection id="alerts" title="运行告警" meta={alerts.length ? `${alerts.length} 项提醒` : "状态正常"} collapsible={view === "overview"} collapsed={reading.collapsed.includes("alerts")} onCollapse={collapseSection}>
-          {alerts.length ? <div className="alert-list">{alerts.map((alert, index) => <article className={`alert-card ${alert.tone}`} key={`${alert.title}-${index}`}><strong>{alert.title}</strong><p>{alert.detail}</p></article>)}</div> : <p className="empty">暂无告警，当前采集和统计状态正常。</p>}
-          <p className="detail-line">告警来自当前小部件已读取的数据，不会触发额外采集。</p>
+        {(view === "overview" || view === "alerts") && <OverviewSection id="alerts" title="运行告警" meta={issues.length ? `${issues.length} 项需处理` : "暂无当前异常"} collapsible={view === "overview"} collapsed={reading.collapsed.includes("alerts")} onCollapse={collapseSection}>
+          {issues.length ? <div className="alert-list">{issues.map((alert, index) => <article className={`alert-card ${alert.tone}`} key={`${alert.title}-${index}`}><strong>{alert.title}</strong><p>{alert.detail}</p></article>)}</div> : <p className="empty">当前没有需要处理的连接、账户或数据时效异常。</p>}
+          {notes.length > 0 && <div className="period-notes"><h3>周期统计与说明</h3>{notes.map(note=><article className="period-note" key={note.title}><strong>{note.title}</strong><p>{note.detail}</p></article>)}</div>}
+          <p className="detail-line">仅当前异常计入关注数量；周期统计保留在此，不会触发额外采集。</p>
+          <button type="button" className="section-open" onClick={()=>openDashboard("monitor/alerts")}>在控制台查看监控记录 →</button>
         </OverviewSection>}
         {(view === "overview" || view === "ranking") && <OverviewSection id="ranking" title="模型与渠道排行" meta={"前 5 · 按 Token"} collapsible={view === "overview"} collapsed={reading.collapsed.includes("ranking")} onCollapse={collapseSection}>
           {([ ["模型排行", period?.models], ["渠道排行", period?.channels] ] as const).map(([title, items]) => <section className="section ranking" key={title}>
             <div className="section-title"><h2>{title}</h2><span>前 5 · 按 Token</span></div>
             {items?.length ? <ol>{items.map((item, index) => <li key={`${item.name}-${index}`}><span className="rank-index">{index + 1}</span><span className="rank-name" title={item.name}>{item.name}</span><span className="rank-value" title={`${count(item.tokens)} Token · ${count(item.requests)} 次请求`}>{compact(item.tokens)} <small>· {count(item.requests)} 次</small></span></li>)}</ol> : <p className="empty">{legacy ? "升级服务后可查看" : period ? "暂无统计数据" : "等待读取统计"}</p>}
           </section>)}
+          <button type="button" className="section-open" onClick={()=>openDashboard("analytics/summary")}>在控制台查看完整排行 →</button>
         </OverviewSection>}
         {(view === "overview" || view === "analysis") && <OverviewSection id="analysis" title="用量分析与趋势" meta={"已保留的周期统计"} collapsible={view === "overview"} collapsed={reading.collapsed.includes("analysis")} onCollapse={collapseSection}>
           {period ? <div className="analysis-grid">
             <div><span>输入 Token</span><strong>{count(period.input_tokens)}</strong></div>
             <div><span>输出 Token</span><strong>{count(period.output_tokens)}</strong></div>
-            <div><span>缓存读取</span><strong>{count(period.cache_read_tokens)}</strong></div>
-            <div><span>缓存写入</span><strong>{count(period.cache_write_tokens)}</strong></div>
             <div><span>平均 Token / 请求</span><strong>{averageTokens != null ? count(averageTokens) : "—"}</strong></div>
             <div><span>错误率</span><strong>{errorRate}</strong></div>
             <div><span>费用未知</span><strong>{count(period.cost_unknown_requests)} 次</strong></div>
             <div><span>费用估算</span><strong>{estimatedCost}</strong></div>
           </div> : <p className="empty">{legacy ? "升级服务后可查看用量分析" : "等待读取统计"}</p>}
+          {period && <UsageInsights period={period} collapsed={reading.collapsed} onCollapse={collapseSection} openDashboard={openDashboard} />}
           {period && <div className="trend-grid">
             <TrendChart title="请求趋势" rows={period.trend ?? []} value={row => row.requests} format={count} />
             <TrendChart title="Token 趋势" rows={period.trend ?? []} value={row => row.input_tokens + row.output_tokens} format={count} />
@@ -325,7 +322,7 @@ export default function App() {
         </>}
         </div>
       </section>
-      <footer className="bottom"><span className={error || display.error || snapshotStale ? "error" : "hint"} role="status"><i className={`status-dot${error || display.error || snapshotStale ? " failed" : lastSuccess ? "" : " pending"}`} />{error ? `${lastSuccess ? `数据截至 ${time(lastSuccess)} · ` : ""}${error}` : display.error || (lastSuccess ? `${snapshotStale ? "旧快照 · " : ""}获取于 ${time(lastSuccess)}` : "等待连接")}</span><button type="button" className="open" onClick={() => void invoke("open_dashboard").catch(reason => setError(String(reason)))}>打开控制台 <ArrowUpRight size={14} /></button></footer>
+      <footer className="bottom"><span className={error || display.error || snapshotStale ? "error" : "hint"} role="status"><i className={`status-dot${error || display.error || snapshotStale ? " failed" : lastSuccess ? "" : " pending"}`} />{error ? `${lastSuccess ? `数据截至 ${time(lastSuccess)} · ` : ""}${error}` : display.error || (lastSuccess ? `${snapshotStale ? "旧快照 · " : ""}获取于 ${time(lastSuccess)}` : "等待连接")}</span><button type="button" className="open" onClick={() => openDashboard(dashboardPages[view])}>打开控制台 <ArrowUpRight size={14} /></button></footer>
     </>}
   </main>;
 }

@@ -233,7 +233,7 @@ func (a *App) finishRequestTrace(t *requestTrace, log *RequestLog) error {
 		if err := recordRoutingQuality(tx, log, payload); err != nil {
 			return err
 		}
-		return nil
+		return recordRequestInsights(tx, log, payload)
 	})
 	if err != nil {
 		slog.Error("请求统计保存失败", "request_id", log.RequestID, "error", err)

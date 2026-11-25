@@ -35,7 +35,10 @@ func seedLegacyRequest(t *testing.T, a *App, at time.Time) RequestLog {
 func TestRequestMigrationArchivesLegacyAndKeepsAccounting(t *testing.T) {
 	a := testApp(t)
 	now := time.Now()
-	seedLegacyRequest(t, a, now)
+	known := seedLegacyRequest(t, a, now)
+	if err := a.DB.Model(&known).Updates(map[string]any{"metrics_version": 2, "usage_recorded": true, "cache_read_recorded": true, "cache_write_recorded": true}).Error; err != nil {
+		t.Fatal(err)
+	}
 	seedLegacyRequest(t, a, now.Add(-time.Minute))
 	date := usageDay(now).Format("2006-01-02")
 	if err := a.DB.Create(&RequestDay{Date: date, Requests: 2, CostMicros: 246}).Error; err != nil {
@@ -59,15 +62,15 @@ func TestRequestMigrationArchivesLegacyAndKeepsAccounting(t *testing.T) {
 			t.Fatal(err)
 		}
 		var day RequestDay
-		if err := reopened.DB.First(&day, "date = ?", date).Error; err != nil || day.Requests != 2 || day.CostMicros != 246 || day.CacheWrite1hTokens != 4 {
+		if err := reopened.DB.First(&day, "date = ?", date).Error; err != nil || day.Requests != 2 || day.CostMicros != 246 || day.CacheWrite1hTokens != 4 || day.CacheSampleRequests != 1 || day.CacheSampleInputTokens != 100 || day.CacheSampleReadTokens != 40 {
 			t.Fatal("legacy overlap doubled or lost totals", day, err)
 		}
 		day = RequestDay{}
 		if err := reopened.DB.First(&day, "date = ?", oldDate).Error; err != nil || day.Requests != 9 || day.CostMicros != 987 {
 			t.Fatal("older archived day lost", day, err)
 		}
-		var hourly struct{ Requests, FirstTokenCount, SemanticFirstTokenCount, DurationMS, GenerationMS int64 }
-		if err := reopened.DB.Model(&RequestHour{}).Select("SUM(requests) AS requests, SUM(first_token_count) AS first_token_count, SUM(semantic_first_token_count) AS semantic_first_token_count, SUM(duration_ms) AS duration_ms, SUM(generation_ms) AS generation_ms").Scan(&hourly).Error; err != nil || hourly.Requests != 2 || hourly.FirstTokenCount != 2 || hourly.SemanticFirstTokenCount != 0 || hourly.DurationMS != 2000 || hourly.GenerationMS != 1600 {
+		var hourly struct{ Requests, FirstTokenCount, SemanticFirstTokenCount, DurationMS, GenerationMS, CacheSampleRequests, CacheSampleInputTokens, CacheSampleReadTokens int64 }
+		if err := reopened.DB.Model(&RequestHour{}).Select("SUM(requests) AS requests, SUM(first_token_count) AS first_token_count, SUM(semantic_first_token_count) AS semantic_first_token_count, SUM(duration_ms) AS duration_ms, SUM(generation_ms) AS generation_ms, SUM(cache_sample_requests) AS cache_sample_requests, SUM(cache_sample_input_tokens) AS cache_sample_input_tokens, SUM(cache_sample_read_tokens) AS cache_sample_read_tokens").Scan(&hourly).Error; err != nil || hourly.Requests != 2 || hourly.FirstTokenCount != 2 || hourly.SemanticFirstTokenCount != 1 || hourly.DurationMS != 2000 || hourly.GenerationMS != 1600 || hourly.CacheSampleRequests != 1 || hourly.CacheSampleInputTokens != 100 || hourly.CacheSampleReadTokens != 40 {
 			t.Fatal("performance aggregates lost", hourly, err)
 		}
 		for _, model := range []any{&RequestLog{}, &RequestDetail{}} {
@@ -182,7 +185,7 @@ func TestRequestMigrationReclaimsOldDatabase(t *testing.T) {
 
 func TestRequestBackupKeepsUsageAndExcludesMemoryDetails(t *testing.T) {
 	a := testApp(t)
-	log := RequestLog{Status: 200, InputTokens: 123, CostMicros: 789}
+	log := RequestLog{Status: 200, InputTokens: 123, CostMicros: 789, MetricsVersion: 2, UsageRecorded: true, CacheReadRecorded: true, CacheReadTokens: 40}
 	trace := a.beginRequestTrace(&log)
 	trace.setRequest(log, object{"input": "do-not-back-up-body"})
 	a.finishRequestTrace(trace, &log)
@@ -204,7 +207,7 @@ func TestRequestBackupKeepsUsageAndExcludesMemoryDetails(t *testing.T) {
 		t.Fatal("memory requests included in backup")
 	}
 	var day RequestDay
-	if err := restored.DB.First(&day).Error; err != nil || day.InputTokens != 123 || day.CostMicros != 789 {
+	if err := restored.DB.First(&day).Error; err != nil || day.InputTokens != 123 || day.CostMicros != 789 || day.CacheSampleRequests != 1 || day.CacheSampleInputTokens != 123 || day.CacheSampleReadTokens != 40 || day.CacheHitRequests != 1 {
 		t.Fatal("backup lost persistent usage", day, err)
 	}
 }

@@ -23,7 +23,7 @@
 }
 body {
   margin: 0;
-  min-width: 360px;
+  min-width: 320px;
 }
 button,
 input,
@@ -1428,6 +1428,13 @@ td strong {
   border-radius: var(--radius-control);
   margin-bottom: 20px;
 }
+.notice > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.notice > .icon-button {
+  flex-shrink: 0;
+}
 .list-toolbar {
   display: flex;
   align-items: center;
@@ -1589,6 +1596,7 @@ dialog {
   box-shadow: 0 16px 60px var(--shadow-color);
   padding: 26px;
   color: var(--text);
+  overflow-wrap: anywhere;
 }
 dialog::backdrop {
   background: var(--overlay);

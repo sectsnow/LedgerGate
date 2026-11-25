@@ -1,3 +1,5 @@
+import type { AdvancedReport } from "../../web/src/insightMetrics";
+
 export type Account = {
   id?: number | null;
   name?: string | null;
@@ -44,12 +46,38 @@ export type Period = {
   output_tokens: number;
   cache_read_tokens: number;
   cache_write_tokens: number;
+  cache_write_1h_tokens?: number | null;
+  cache_sample_requests?: number | null;
+  cache_sample_input_tokens?: number | null;
+  cache_sample_read_tokens?: number | null;
+  cache_hit_requests?: number | null;
+  cache_write_sample_requests?: number | null;
+  quality?: { observed_requests: number; first_attempt_successes: number; retried_successes: number; failed_requests: number; attempt_overhead_ms?: number | null } | null;
+  insights?: AdvancedReport | null;
   cost_micros: number;
   cost_unknown_requests: number;
   trend?: Trend[];
   models: Rank[];
   channels: Rank[];
 };
+
+export function periodMetrics(period: Period) {
+  const ratio = (value: number | null | undefined, total: number | null | undefined) => value != null && total != null && Number.isFinite(value) && Number.isFinite(total) && total > 0 && value >= 0 && value <= total ? value / total * 100 : null;
+  const knownCosts = period.requests - period.cost_unknown_requests;
+  return {
+    uncachedInput: (period.cache_sample_requests ?? 0) > 0 && period.cache_sample_input_tokens != null && period.cache_sample_read_tokens != null && period.cache_sample_input_tokens >= period.cache_sample_read_tokens ? period.cache_sample_input_tokens - period.cache_sample_read_tokens : null,
+    cacheHitRate: ratio(period.cache_sample_read_tokens, period.cache_sample_input_tokens),
+    cacheRequestRate: ratio(period.cache_hit_requests, period.cache_sample_requests),
+    cacheCoverage: ratio(period.cache_sample_requests, period.requests),
+    writeCoverage: ratio(period.cache_write_sample_requests, period.requests),
+    firstSuccessRate: ratio(period.quality?.first_attempt_successes, period.quality?.observed_requests),
+    qualityCoverage: ratio(period.quality?.observed_requests, period.requests),
+    costCoverage: ratio(knownCosts, period.requests),
+    averageCost: knownCosts > 0 && knownCosts <= period.requests ? period.cost_micros / knownCosts / 1_000_000 : null,
+  };
+}
+
+export const percentage = (value: number | null) => value == null ? "—" : `${value.toLocaleString("zh-CN", { maximumFractionDigits: 1 })}%`;
 
 export type Finance = {
   currency: string;
@@ -90,7 +118,7 @@ export function finances(overview: Overview): Finance[] {
     }
     const checked = account.checked_at ? Date.parse(account.checked_at) : NaN;
     if (Number.isFinite(checked)) { group.oldestCheck = Math.min(group.oldestCheck ?? checked, checked); group.checkedCount++; }
-    if (!account.enabled || account.status !== "ok" || account.has_warning || !Number.isFinite(checked)) group.attention = true;
+    if (account.enabled && (account.status !== "ok" || account.has_warning || !Number.isFinite(checked))) group.attention = true;
   }
   return [...groups.values()].sort((left, right) => left.currency === right.currency ? 0 : left.currency === "USD" ? -1 : right.currency === "USD" ? 1 : !left.currency ? 1 : !right.currency ? -1 : left.currency.localeCompare(right.currency));
 }
@@ -102,9 +130,9 @@ export function amount(value: number | null, currency: string): string {
 }
 
 export function accountNotes(account: Account, date: string, now: number): string[] {
+  if (!account.enabled) return [];
   const notes: string[] = [];
-  if (!account.enabled) notes.push("监控已暂停，保留上次数据");
-  else if (account.status === "error") notes.push("采集失败，请在控制台查看错误详情");
+  if (account.status === "error") notes.push("采集失败，请在控制台查看错误详情");
   else if (account.status === "low") notes.push("余额低于已设置的告警阈值");
   else if (!account.checked_at || account.status === "pending") notes.push("尚未完成采集");
   const checked = account.checked_at ? Date.parse(account.checked_at) : NaN;

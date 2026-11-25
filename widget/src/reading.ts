@@ -1,5 +1,5 @@
 export const READING_KEY = "ledgergate-widget-reading";
-export const sectionIds = ["assets", "usage", "alerts", "ranking", "analysis"] as const;
+export const sectionIds = ["assets", "usage", "alerts", "ranking", "analysis", "cache", "quality", "latency", "cache-cost", "error-breakdown", "cache-comparison", "cache-trend"] as const;
 export type SectionId = typeof sectionIds[number];
 export type ReadingPrefs = { density: "comfortable" | "compact"; textSize: "standard" | "large"; collapsed: SectionId[] };
 export function parseReadingPrefs(raw: string | null): ReadingPrefs {

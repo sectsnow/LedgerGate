@@ -18,16 +18,17 @@ export default function AccountAssets({ overview, now }: { overview: Overview | 
     {groups.map(group => {
       const accounts = overview.accounts.filter(account => account.currency.trim().toUpperCase() === group.currency);
       const problems = accounts.filter(account => accountNotes(account, today, now).length > 0).length;
+      const paused = accounts.filter(account => !account.enabled).length;
       return <div className="finance-row" key={group.currency}>
         <div><Money value={group.balance} currency={group.currency} /><small>余额已采集 {group.balanceCount}/{group.accounts}</small></div>
         <div><Money value={group.today} currency={group.currency} /><small>消费已采集 {group.todayCount}/{group.accounts}</small></div>
         <p>上游检查：{group.checkedCount === group.accounts ? `最早 ${collectionTime(group.oldestCheck)}` : `${group.checkedCount}/${group.accounts} 个账户时间已知`}</p>
         <p>消费成功采集：{group.todayCount > 0 && group.todayCheckedCount === group.todayCount ? `最早 ${collectionTime(group.oldestTodayCheck)}` : "时间未知，等待成功采集"}（非实时）</p>
-        <details className="collection-details"><summary>查看 {group.accounts} 个账户采集详情{problems > 0 ? ` · ${problems} 个需关注` : " · 正常"}</summary>
+        <details className="collection-details"><summary>查看 {group.accounts} 个账户采集详情{problems > 0 ? ` · ${problems} 个需关注` : paused ? "" : " · 正常"}{paused > 0 && ` · ${paused} 个已暂停`}</summary>
           <ul>{accounts.map((account, index) => {
             const notes = accountNotes(account, today, now);
-            return <li key={account.id ?? index}><div className="collection-heading"><b>{account.name || `账户 ${index + 1}`}</b><span className={notes.length ? "notice" : "hint"}>{notes.length ? "需关注" : "正常"}</span></div>
-              <p>{notes.length ? notes.join("；") : "余额与今日消费均已采集"}</p>
+            return <li key={account.id ?? index}><div className="collection-heading"><b>{account.name || `账户 ${index + 1}`}</b><span className={notes.length ? "notice" : "hint"}>{!account.enabled ? "已暂停" : notes.length ? "需关注" : "正常"}</span></div>
+              <p>{!account.enabled ? "监控已暂停，保留上次数据；暂停期间不更新" : notes.length ? notes.join("；") : "余额与今日消费均已采集"}</p>
               <p>上游检查 {collectionTime(account.checked_at)} · 消费采集 {account.today_date === overview.date ? collectionTime(account.today_collected_at) : "等待今日采集"}</p>
             </li>;
           })}</ul>

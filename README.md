@@ -14,7 +14,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/overview-preview-dark.png">
-  <img src="docs/images/overview-preview-light.png" alt="运行概览：集中查看账户余额、今日消费与余额趋势" width="1440">
+  <img src="docs/images/overview-preview-light.png" alt="运行概览：账户余额、今日消费、请求用量与当前问题" width="1440">
 </picture>
 
 支持浅色、深色和跟随系统。以上为概览局部，完整界面见[更多截图](#更多截图)；所有截图使用本地演示数据。
@@ -39,7 +39,7 @@
     </td>
     <td width="50%" valign="top">
       <h3>04 · 请求与费用</h3>
-      <p>查看进行中请求、近期响应与上游尝试，保存跨重启的脱敏请求摘要，统计 Token、缓存命中和费用估算。支持 Key 周期预算、并发与请求频率限制，以及同模型渠道表现比较。</p>
+      <p>查看进行中请求、近期响应与上游尝试，保存跨重启的脱敏请求摘要，统计 Token、缓存命中、延迟分布和费用估算。统计分析独立展示缓存、稳定性及费用，支持 Key 周期预算、并发与请求频率限制。</p>
     </td>
   </tr>
 </table>
@@ -57,7 +57,7 @@
 ```yaml
 services:
   ledgergate:
-    image: ghcr.io/sectsnow/ledgergate:0.1.15
+    image: ghcr.io/sectsnow/ledgergate:0.1.16
     restart: unless-stopped
     ports:
       - "8081:8080"
@@ -133,11 +133,11 @@ curl http://127.0.0.1:8081/v1/chat/completions \
 ## 更多截图
 
 <details>
-  <summary>完整运行概览：余额趋势、请求活跃度与网关用量</summary>
+  <summary>完整运行概览：关键指标、今日趋势、当前问题与最近请求</summary>
 
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/overview-dark.png">
-    <img src="docs/images/overview-light.png" alt="完整运行概览，包含余额趋势、年度请求活跃度及网关用量" width="1440">
+    <img src="docs/images/overview-light.png" alt="完整运行概览，包含关键指标、今日趋势、当前问题和最近请求；历史与详细指标在统计分析查看" width="1440">
   </picture>
 </details>
 

@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { version } from "../package.json";
 import {
   Activity,
+  ChartNoAxesCombined,
   ArrowLeft,
   ArrowUpRight,
   ArrowUpDown,
@@ -16,27 +17,23 @@ import {
   CirclePause,
   CircleX,
   Clock3,
-  Coins,
   Database,
   ExternalLink,
   FileText,
   FlaskConical,
   GripVertical,
-  Hash,
   History,
   Inbox,
   KeyRound,
   LayoutDashboard,
   LoaderCircle,
   LogOut,
-  Megaphone,
   Network,
   Pause,
   Pencil,
   Play,
   Plus,
   RefreshCw,
-  Receipt,
   Search,
   SearchX,
   Server,
@@ -55,7 +52,6 @@ import {
   protocolNames,
   type Account,
   type AccountRow,
-  type AccountSummary,
   type AnnouncementPage,
   type Channel,
   type ChannelRow,
@@ -66,8 +62,6 @@ import {
   type Key,
   type RuntimeOptions,
   type PriceSyncResult,
-  type RequestLog,
-  type RequestDay,
   type Route,
   type Settings,
   type UpstreamRate,
@@ -82,21 +76,27 @@ import BrandMark from "./BrandMark";
 import AccountLogo from "./AccountLogo";
 import AccountLogoEditor from "./AccountLogoEditor";
 import AccountTokenField from "./AccountTokenField";
-import RequestHistory, { RequestList } from "./RequestHistory";
+import RequestHistory from "./RequestHistory";
 import ChannelBatch, { ChannelSelection } from "./ChannelBatch";
 import ChannelModelSync from "./ChannelModelSync";
 import ChannelModelEditor, { channelModelNames } from "./ChannelModelEditor";
 import { channelModelChanges } from "./channelModels";
 import useRouteOrder from "./useRouteOrder";
 import { GroupRoutingSummary, RouteRoutingStatus, RoutingStrategyIcon, useGroupRouting } from "./RoutingStatus";
-import { AnnouncementList, MonitorHistory, MonitoringPanels } from "./MonitorActivity";
+import { AnnouncementList, MonitorHistory } from "./MonitorActivity";
 import ThemePicker from "./ThemePicker";
-import RequestQuality from "./RequestQuality";
+import Dashboard from "./Dashboard";
+import LazyWorkspace from "./LazyWorkspace";
+const Analytics=lazy(()=>import("./Analytics"));
+const AnalysisDetail=lazy(()=>import("./AnalysisDetail"));
+import WorkspaceTabs from "./WorkspaceTabs";
+import useWorkspaceData from "./useWorkspaceData";
+import { financialAmount } from "./WorkspaceStats";
+import { analyticsTabs, settingsTabs, monitorTabs, workspacePage, workspacePollInterval } from "./workspaceNavigation";
 import AccountCollection from "./AccountCollection";
 import KeyUsagePanel, { KeyBudgetStatus } from "./KeyUsagePanel";
 import { budgetMicros } from "./moneyInput";
 import "./gateway-operations.css";
-import RequestTrend from "./RequestTrend";
 import BackupPanel from "./BackupPanel";
 import ProxySettings from "./ProxySettings";
 import WidgetCredentialPanel from "./WidgetCredentialPanel";
@@ -105,22 +105,23 @@ import KeyModelPicker from "./KeyModelPicker";
 import DataTransferPanel from "./DataTransferPanel";
 import AdminPasswordPanel, { adminPasswordError } from "./AdminPasswordPanel";
 import BuildInfoPanel, { buildDescription } from "./BuildInfoPanel";
-import { applyTheme, readTheme, type DataTone } from "./themes";
+import { applyTheme, readTheme } from "./themes";
 import "./style.css";
 import "./themes.css";
+import "./workspace-layout.css";
+import { settingsSection, type SettingsSection } from "./settingsSection";
 
 const pages = [
-  { id: "overview", name: "运行概览", icon: LayoutDashboard },
-  { id: "accounts", name: "上游账户", icon: Server },
-  { id: "channels", name: "转发渠道", icon: Network },
-  { id: "models", name: "模型路由", icon: Workflow },
-  { id: "model-tests", name: "模型测试", icon: FlaskConical },
-  { id: "keys", name: "网关密钥", icon: KeyRound },
-  { id: "requests", name: "请求记录", icon: Activity },
-  { id: "alerts", name: "告警中心", icon: Bell },
-  { id: "rate-changes", name: "倍率变动", icon: ArrowUpDown },
-  { id: "announcements", name: "上游公告", icon: Megaphone },
-  { id: "settings", name: "系统设置", icon: Settings2 },
+  { id:"overview", name:"运行概览", icon:LayoutDashboard, group:"总览" },
+  { id:"analytics", name:"统计分析", icon:ChartNoAxesCombined, group:"分析与排障" },
+  { id:"requests", name:"请求记录", icon:Activity, group:"分析与排障" },
+  { id:"accounts", name:"上游账户", icon:Server, group:"接入与调度" },
+  { id:"channels", name:"转发渠道", icon:Network, group:"接入与调度" },
+  { id:"models", name:"模型路由", icon:Workflow, group:"接入与调度" },
+  { id:"model-tests", name:"模型测试", icon:FlaskConical, group:"接入与调度" },
+  { id:"keys", name:"网关密钥", icon:KeyRound, group:"接入与调度" },
+  { id:"monitor", name:"监控中心", icon:Bell, group:"监控与系统" },
+  { id:"settings", name:"系统设置", icon:Settings2, group:"监控与系统" },
 ];
 const strategyNames: Record<string, string> = {
   manual: "手动选择",
@@ -153,11 +154,6 @@ const statusIcons: Record<string, typeof CircleCheck> = {
   ok: CircleCheck, low: Wallet, error: CircleAlert, pending: Clock3,
   paused: CirclePause, sent: CircleCheck, local: FileText, failed: CircleX,
 };
-const compact = (value: number) =>
-  new Intl.NumberFormat("zh-CN", {
-    notation: "compact",
-    maximumFractionDigits: 1,
-  }).format(value);
 const date = (value: string | null) =>
   value
     ? new Date(value).toLocaleString("zh-CN", { hour12: false })
@@ -420,8 +416,7 @@ function App() {
   useLayoutEffect(() => applyTheme(theme), [theme]);
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [loginNotice, setLoginNotice] = useState("");
-  const [page, setPage] = useState(location.hash.slice(1) || "overview");
-  const [data, setData] = useState<Data | null>(null);
+  const [page, setPage] = useState(() => workspacePage(location.hash.slice(1)));
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [accountEdit, setAccountEdit] = useState<AccountRow | "new" | null>(
@@ -441,54 +436,12 @@ function App() {
   const [generateModels, setGenerateModels] = useState(false);
   const [detail, setDetail] = useState<Account | null>(null);
   const [importAccount, setImportAccount] = useState<Account | null>(null);
-  const refreshOrder = useRef({ issued: 0, applied: 0 });
+  const {data,error:workspaceError,refresh,clear}=useWorkspaceData(page,authenticated,setMessage);
   const navigate = (id: string) => {
-    location.hash = id;
-    setPage(id);
+    const next=workspacePage(id);
+    location.hash=next;
+    setPage(next);
   };
-  const refresh = useCallback(async () => {
-    const order = ++refreshOrder.current.issued;
-    const [
-      accounts,
-      channels,
-      groups,
-      keys,
-      requests,
-      alerts,
-      rateChanges,
-      announcements,
-      settings,
-      overview,
-      build,
-    ] = await Promise.all([
-      api<Data["accounts"]>("/accounts"),
-      api<Data["channels"]>("/channels"),
-      api<Data["groups"]>("/groups"),
-      api<Data["keys"]>("/keys"),
-      api<Data["requests"]>("/requests"),
-      api<Data["alerts"]>("/alerts?page=1&page_size=10"),
-      api<Data["rateChanges"]>("/alerts?kind=rates_changed&page=1&page_size=10"),
-      api<Data["announcements"]>("/announcements?page=1&page_size=10"),
-      api<Data["settings"]>("/settings"),
-      api<Data["overview"]>("/overview"),
-      api<Data["build"]>("/version").catch(() => null),
-    ]);
-    if (order < refreshOrder.current.applied) return;
-    refreshOrder.current.applied = order;
-    setData({
-      accounts,
-      channels,
-      groups,
-      keys,
-      requests,
-      alerts,
-      rateChanges,
-      announcements,
-      settings,
-      overview,
-      build,
-    });
-  }, []);
   useEffect(() => {
     api("/session")
       .then(() => setAuthenticated(true))
@@ -496,7 +449,7 @@ function App() {
     const expired = (event: Event) => {
       if (event instanceof CustomEvent && typeof event.detail === "string") setLoginNotice(event.detail);
       setAuthenticated(false);
-      setData(null);
+      clear();
       setAccountEdit(null);
       setChannelEdit(null);
       setGroupEdit(null);
@@ -505,7 +458,12 @@ function App() {
       setDetail(null);
       setImportAccount(null);
     };
-    const hash = () => setPage(location.hash.slice(1) || "overview");
+    const hash = () => {
+      const next=workspacePage(location.hash.slice(1));
+      if(location.hash.slice(1)!==next)history.replaceState(null,"",`#${next}`);
+      setPage(next);
+    };
+    hash();
     window.addEventListener("session-expired", expired);
     window.addEventListener("hashchange", hash);
     return () => {
@@ -513,17 +471,10 @@ function App() {
       window.removeEventListener("hashchange", hash);
     };
   }, []);
-  useEffect(() => {
-    if (!authenticated) return;
-    refresh().catch((e) => setMessage(e.message));
-    const timer = setInterval(() => {
-      if (!document.hidden) refresh().catch((e) => setMessage(e.message));
-    }, 15000);
-    return () => {
-      clearInterval(timer);
-      refreshOrder.current.applied = ++refreshOrder.current.issued;
-    };
-  }, [authenticated, refresh]);
+  async function logout() {
+    try { await api("/logout","POST");setAuthenticated(false);clear(); }
+    catch(error) { setMessage((error as Error).message); }
+  }
   async function run(task: () => Promise<unknown>, success = "已完成") {
     try {
       await task();
@@ -576,13 +527,15 @@ function App() {
       </div>
     );
   if (!authenticated) return <Login notice={loginNotice} done={() => { setLoginNotice(""); setAuthenticated(true); }} />;
-  const current = pages.find((p) => p.id === page.split("/")[0]) || pages[0];
-  const accountID = page.match(/^accounts\/(\d+)\/channels$/)?.[1];
-  const selectedAccount = data?.accounts.find(
+  const route=page.split("?")[0];
+  const section=route.split("/")[1];
+  const current = pages.find((p) => p.id === route.split("/")[0]) || pages[0];
+  const accountID = route.match(/^accounts\/(\d+)\/channels$/)?.[1];
+  const selectedAccount = data?.accounts?.find(
     (row) => row.account.id === Number(accountID),
   )?.account;
   const badAccounts =
-    data?.accounts.filter(
+    data?.accounts?.filter(
       (r) => r.account.enabled && ["low", "error"].includes(r.account.status),
     ).length || 0;
   const addAccount = () => {
@@ -607,13 +560,13 @@ function App() {
             LedgerGate<small>上游与网关</small>
           </span>
         </a>
-        <div className="sidebar-label">工作空间</div>
+
         <nav>
           {pages.map((p, index) => (
             <React.Fragment key={p.id}>
-              {index === 5 && <div className="nav-divider" />}
+              {(index===0 || pages[index-1].group!==p.group) && <div className="sidebar-label nav-group-label">{p.group}</div>}
               <a
-                href={`#${p.id}`}
+                href={`#${workspacePage(p.id)}`}
                 aria-label={p.name}
                 aria-current={current.id === p.id ? "page" : undefined}
                 className={current.id === p.id ? "active" : ""}
@@ -633,13 +586,7 @@ function App() {
             本地控制台<span title={`前端 v${version}\n${buildDescription(data?.build)}`}>{data?.build ? `后端 v${data.build.version}${data.build.modified ? "*" : ""}` : "后端未确认"}</span>
           </div>
           <button
-            onClick={() =>
-              run(async () => {
-                await api("/logout", "POST");
-                setAuthenticated(false);
-                setData(null);
-              })
-            }
+            onClick={() => void logout()}
           >
             <LogOut size={16} />
             退出登录
@@ -657,13 +604,7 @@ function App() {
           <button
             className="mobile-logout icon-button"
             aria-label="退出登录"
-            onClick={() =>
-              run(async () => {
-                await api("/logout", "POST");
-                setAuthenticated(false);
-                setData(null);
-              })
-            }
+            onClick={() => void logout()}
           >
             <LogOut size={17} />
           </button>
@@ -785,22 +726,15 @@ function App() {
           )}
           {!data ? (
             <div className="panel">
-              <Empty title="正在读取工作空间" icon={<LoaderCircle size={25} className="spin" aria-hidden="true" />} />
+              <Empty title={workspaceError ? "读取工作空间失败" : "正在读取工作空间"} detail={workspaceError ? "请检查服务连接后重试。" : undefined} icon={workspaceError ? <CircleAlert size={25} aria-hidden="true" /> : <LoaderCircle size={25} className="spin" aria-hidden="true" />} action={workspaceError ? <button className="secondary" onClick={()=>{setMessage("");void refresh().catch(error=>setMessage(error.message));}}>重新加载</button> : undefined} />
             </div>
           ) : (
             <>
-              {current.id === "overview" && (
-                <Overview
-                  data={data}
-                  monitor={setMonitoring}
-                  navigate={navigate}
-                  addAccount={addAccount}
-                  addChannel={() => {
-                    navigate("channels");
-                    addChannel();
-                  }}
-                />
-              )}
+              {current.id === "overview" && <Dashboard data={data} navigate={navigate} dialog={Dialog} addAccount={addAccount} />}
+              {current.id === "analytics" && <>
+                <WorkspaceTabs prefix="analytics" tabs={analyticsTabs} selected={section} label="统计分析分类" />
+                <LazyWorkspace key={route}><Suspense fallback={<p role="status">正在加载统计页面…</p>}>{route.endsWith("/detail") ? <AnalysisDetail page={page} revision={data} /> : <Analytics data={data} tab={section} navigate={navigate} />}</Suspense></LazyWorkspace>
+              </>}
               {current.id === "accounts" && !accountID && (
                 <Accounts
                   rows={data.accounts}
@@ -863,18 +797,26 @@ function App() {
               {current.id === "requests" && (
                 <RequestHistory channels={data.channels} dialog={Dialog} />
               )}
-              {["alerts", "rate-changes", "announcements"].includes(current.id) && (
-                <MonitorHistory key={current.id} mode={current.id as "alerts" | "rate-changes" | "announcements"} accounts={data.accounts} revision={data} dialog={Dialog} />
-              )}
-              {current.id === "settings" && (
-                <><BuildInfoPanel build={data.build} frontend={version} /><ThemePicker value={theme} change={setTheme} /><AdminPasswordPanel /><WidgetCredentialPanel key={`widget-${settingsRevision}`} /><ProxySettings key={settingsRevision} /><NotificationPanel key={`notifications-${settingsRevision}`} accounts={data.accounts} defaultRetries={data.settings.runtime.notification_retries} dialog={Dialog} field={Field} /><SettingsForm key={settingsRevision} settings={data.settings} run={run} /><DataTransferPanel changed={async settingsImported => { await refresh(); if (settingsImported) setSettingsRevision(value => value + 1); }} /><BackupPanel dialog={Dialog} /></>
-              )}
+              {current.id === "monitor" && <>
+                <WorkspaceTabs prefix="monitor" tabs={monitorTabs} selected={section} label="监控中心分类" />
+                <MonitorHistory key={section} mode={section==="rates" ? "rate-changes" : section==="announcements" ? "announcements" : "alerts"} accounts={data.accounts} revision={data} dialog={Dialog} />
+              </>}
+              {current.id === "settings" && <>
+                <WorkspaceTabs prefix="settings" tabs={settingsTabs} selected={section} label="系统设置分类" />
+                {section==="general" && <><ThemePicker value={theme} change={setTheme} /><AdminPasswordPanel /></>}
+                {section==="runtime" && <><ProxySettings key={settingsRevision} /><SettingsForm key={`runtime-${settingsRevision}`} section="runtime" settings={data.settings} run={run} /></>}
+                {section==="notifications" && <><NotificationPanel key={`notifications-${settingsRevision}`} accounts={data.accounts} defaultRetries={data.settings.runtime.notification_retries} dialog={Dialog} field={Field} /><SettingsForm key={`notify-${settingsRevision}`} section="notifications" settings={data.settings} run={run} /></>}
+                {section==="widget" && <WidgetCredentialPanel key={`widget-${settingsRevision}`} />}
+                {section==="data" && <><SettingsForm key={`data-${settingsRevision}`} section="data" settings={data.settings} run={run} /><DataTransferPanel changed={async settingsImported => { await refresh(); if (settingsImported) setSettingsRevision(value => value + 1); }} /><BackupPanel dialog={Dialog} /></>}
+                {section==="about" && <BuildInfoPanel build={data.build} frontend={version} />}
+              </>}
+
             </>
           )}
           <footer className="page-footer">
             <span>
               <Database size={13} />
-              SQLite · 每 15 秒刷新
+              SQLite · {workspacePollInterval(page) ? "每 15 秒刷新当前页面" : current.id==="requests" ? "请求记录每 2 秒刷新" : "按需加载，可手动刷新"}
             </span>
             <span>LedgerGate</span>
           </footer>
@@ -974,785 +916,6 @@ function App() {
   );
 }
 
-function financialAmount(value: number | null, currency: string): string {
-  if (value === null) return "—";
-  const amount = value.toLocaleString("zh-CN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 4,
-  });
-  return currency === "USD"
-    ? `$${amount}`
-    : `${amount} ${currency || "未设置单位"}`;
-}
-
-function chartDomain(values: (number | null)[]): [number, number] {
-  const known = values.filter((value): value is number => value !== null);
-  const minimum = Math.min(0, ...known);
-  const maximum = Math.max(0, ...known);
-  const rough = Math.max(maximum - minimum, 0.01) / 4;
-  const magnitude = 10 ** Math.floor(Math.log10(rough));
-  const normalized = rough / magnitude;
-  let step = magnitude;
-  if (normalized > 5) step *= 10;
-  else if (normalized > 2) step *= 5;
-  else if (normalized > 1) step *= 2;
-  const lower = Math.floor(minimum / step) * step;
-  const upper = Math.ceil(maximum / step) * step;
-  return [lower, upper === lower ? lower + step * 4 : upper];
-}
-
-function BalanceOverview({
-  summary,
-  accounts,
-}: {
-  summary: AccountSummary;
-  accounts: AccountRow[];
-}) {
-  const container = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(900);
-  const [activeIndex, setActiveIndex] = useState<number | null>(null);
-  const [hoverY, setHoverY] = useState<number | null>(null);
-  const tooltip = useRef<HTMLDivElement>(null);
-  const tooltipID = React.useId();
-  const [tooltipSize, setTooltipSize] = useState({ width: 220, height: 120 });
-  const [days, setDays] = useState<7 | 14 | 30>(7);
-  useEffect(() => {
-    if (!container.current) return;
-    const observer = new ResizeObserver((entries) =>
-      setWidth(Math.max(200, entries[0].contentRect.width)),
-    );
-    observer.observe(container.current);
-    return () => observer.disconnect();
-  }, []);
-  const points = summary.history.slice(-days);
-  const balances = points.map((point) => point.balance);
-  const consumption = points.map((point) => point.consumption);
-  const partialDays = points.filter((point) =>
-    (point.balance !== null && point.balance_accounts < summary.accounts) ||
-    (point.consumption !== null && point.consumption_accounts < summary.accounts),
-  ).length;
-  const [balanceMin, balanceMax] = chartDomain(balances);
-  const [costMin, costMax] = chartDomain(consumption);
-  const left = 56;
-  const right = 56;
-  const top = 26;
-  const bottom = 222;
-  const plotWidth = width - left - right;
-  const x = (index: number) =>
-    left + (index * plotWidth) / Math.max(1, points.length - 1);
-  const halfStep = plotWidth / Math.max(1, points.length - 1) / 2;
-  const labelCount = Math.min(
-    points.length,
-    Math.max(2, Math.floor(plotWidth / 55) + 1),
-  );
-  const labelIndexes = new Set(
-    Array.from({ length: labelCount }, (_, index) =>
-      Math.round((index * (points.length - 1)) / Math.max(1, labelCount - 1)),
-    ),
-  );
-  const balanceY = (value: number) =>
-    bottom -
-    ((value - balanceMin) / (balanceMax - balanceMin)) * (bottom - top);
-  const costY = (value: number) =>
-    bottom - ((value - costMin) / (costMax - costMin)) * (bottom - top);
-  const linePath = (
-    values: (number | null)[],
-    y: (value: number) => number,
-  ) => {
-    let connected = false;
-    return values.map((value, index) => {
-      if (value === null) { connected = false; return ""; }
-      const command = connected ? "L" : "M";
-      connected = true;
-      return `${command}${x(index).toFixed(2)},${y(value).toFixed(2)}`;
-    }).join(" ");
-  };
-  const active = activeIndex ?? points.length - 1;
-  const point = points[active];
-  const recordedDays = points.filter(
-    (_, index) => balances[index] !== null || consumption[index] !== null,
-  ).length;
-  const currency = summary.currency;
-  useLayoutEffect(() => {
-    if (!tooltip.current) return;
-    const { offsetWidth, offsetHeight } = tooltip.current;
-    setTooltipSize((previous) => previous.width === offsetWidth && previous.height === offsetHeight
-      ? previous
-      : { width: offsetWidth, height: offsetHeight });
-  }, [activeIndex, point, width, currency]);
-  const anchorX = x(active);
-  const anchorY = hoverY ?? (top + bottom) / 2;
-  const tooltipLeft = Math.max(8, Math.min(
-    anchorX + 12 + tooltipSize.width > width - 8 ? anchorX - tooltipSize.width - 12 : anchorX + 12,
-    width - tooltipSize.width - 8,
-  ));
-  const tooltipTop = Math.max(8, Math.min(
-    anchorY + 12 + tooltipSize.height > 252 ? anchorY - tooltipSize.height - 12 : anchorY + 12,
-    252 - tooltipSize.height,
-  ));
-  const inspect = (index: number, clientY: number) => {
-    setActiveIndex(index);
-    setHoverY(clientY - (container.current?.getBoundingClientRect().top || 0));
-  };
-  const tick = (value: number) =>
-    value.toLocaleString("zh-CN", {
-      notation: "compact",
-      maximumFractionDigits: 4,
-    });
-  return (
-    <section className="panel balance-overview" data-tone="balance">
-      <div className="panel-heading">
-        <div><h2 className="icon-heading"><Wallet size={18} aria-hidden="true" />余额概览</h2>
-          <p>每日按实际采集快照汇总，暂停监控仍保留历史记录。</p>
-        </div>
-        <div className="balance-heading-controls">
-          <div
-            className="balance-period"
-            role="group"
-            aria-label="余额概览时间范围"
-          >
-            {([7, 14, 30] as const).map((period) => (
-              <button
-                key={period}
-                type="button"
-                aria-pressed={days === period}
-                onClick={() => {
-                  setDays(period);
-                  setActiveIndex(null);
-                  setHoverY(null);
-                }}
-              >
-                {period}天
-              </button>
-            ))}
-          </div>
-          <span>{currency || "未设置单位"}</span>
-        </div>
-      </div>
-      <div className="balance-legend">
-        <span>
-          <i className="balance-dot" />
-          余额
-        </span>
-        <span>
-          <i className="consumption-dot" />
-          消费趋势
-        </span>
-        {partialDays > 0 && <span><i className="partial-dot" />部分采集合计</span>}
-      </div>
-      <div className="balance-chart" ref={container}>
-        <svg
-          viewBox={`0 0 ${width} 260`}
-          width="100%"
-          height="260"
-          role="group"
-          aria-label={`最近${days}天账户余额与实际消费趋势`}
-        >
-          <text x={left} y="12" className="balance-axis-title">余额</text>
-          <text x={width - right} y="12" textAnchor="end" className="consumption-axis-title">消费</text>
-          {[0, 0.25, 0.5, 0.75, 1].map((fraction) => {
-            const y = top + (bottom - top) * fraction;
-            return (
-              <g key={fraction}>
-                <line
-                  x1={left}
-                  x2={width - right}
-                  y1={y}
-                  y2={y}
-                  className="balance-grid"
-                />
-                <text x={left - 8} y={y + 3} textAnchor="end">
-                  {tick(balanceMax - fraction * (balanceMax - balanceMin))}
-                </text>
-                <text x={width - right + 8} y={y + 3}>
-                  {tick(costMax - fraction * (costMax - costMin))}
-                </text>
-              </g>
-            );
-          })}
-          <path d={linePath(balances, balanceY)} className="balance-line" />
-          <path d={linePath(consumption, costY)} className="consumption-line" />
-          {points.map((day, index) => (
-            <g key={day.date}>
-              {balances[index] !== null && (
-                <circle
-                  cx={x(index)}
-                  cy={balanceY(balances[index]!)}
-                  r={activeIndex === index ? 5 : 4}
-                  className={`balance-point${activeIndex === index ? " active" : ""}`}
-                />
-              )}
-              {consumption[index] !== null && (
-                <circle
-                  cx={x(index)}
-                  cy={costY(consumption[index]!)}
-                  r={activeIndex === index ? 5 : 4}
-                  className={`consumption-point${activeIndex === index ? " active" : ""}`}
-                />
-              )}
-              {labelIndexes.has(index) && (
-                <text x={x(index)} y="248" textAnchor="middle">
-                  {day.date.slice(5).replace("-", "/")}
-                </text>
-              )}
-              <g
-                className="balance-day"
-                tabIndex={0}
-                role="img"
-                aria-label={`${day.date}，余额${day.balance_accounts < summary.accounts && day.balance !== null ? "（部分合计）" : ""} ${balances[index] === null ? "未采集" : financialAmount(balances[index], currency)}，消费${day.consumption_accounts < summary.accounts && day.consumption !== null ? "（部分合计）" : ""} ${consumption[index] === null ? "未采集" : financialAmount(consumption[index], currency)}`}
-                aria-describedby={activeIndex === index ? tooltipID : undefined}
-                onPointerEnter={(event) => inspect(index, event.clientY)}
-                onPointerMove={(event) => inspect(index, event.clientY)}
-                onPointerLeave={(event) => {
-                  if (event.pointerType !== "touch") setActiveIndex(null);
-                }}
-                onClick={(event) => inspect(index, event.clientY)}
-                onFocus={() => { setActiveIndex(index); setHoverY(null); }}
-                onBlur={() => setActiveIndex(null)}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") setActiveIndex(null);
-                }}
-              >
-                {activeIndex === index && (
-                  <line
-                    x1={x(index)}
-                    x2={x(index)}
-                    y1={top}
-                    y2={bottom}
-                    className="balance-cursor"
-                  />
-                )}
-                <rect
-                  x={index === 0 ? left : x(index) - halfStep}
-                  y={top}
-                  width={
-                    index === 0 || index === points.length - 1
-                      ? halfStep
-                      : halfStep * 2
-                  }
-                  height={bottom - top}
-                  fill="transparent"
-                  className="balance-hit"
-                />
-              </g>
-            </g>
-          ))}
-        </svg>
-        {activeIndex !== null && point && (
-          <div
-            className="balance-tooltip"
-            id={tooltipID}
-            role="tooltip"
-            aria-live="polite"
-            ref={tooltip}
-            style={{ left: tooltipLeft, top: tooltipTop }}
-          >
-            <strong className="balance-tooltip-date">
-              <time dateTime={point.date}>{Number(point.date.slice(5, 7))}月{Number(point.date.slice(8, 10))}日</time>
-            </strong>
-            <div className="balance-tooltip-row balance-tooltip-balance">
-              <span>{point.balance !== null && point.balance_accounts < summary.accounts ? "余额（部分）：" : "余额："}</span><b>{financialAmount(balances[active], currency)}</b>
-            </div>
-            <div className="balance-tooltip-row balance-tooltip-consumption">
-              <span>{point.consumption !== null && point.consumption_accounts < summary.accounts ? "消费（部分）：" : "消费："}</span><b>{financialAmount(consumption[active], currency)}</b>
-            </div>
-            {(point.balance_accounts < summary.accounts || point.consumption_accounts < summary.accounts) && (
-              <small>余额已采集 {point.balance_accounts}/{summary.accounts} · 消费已采集 {point.consumption_accounts}/{summary.accounts}</small>
-            )}
-          </div>
-        )}
-      </div>
-      {(recordedDays < points.length || partialDays > 0) && (
-        <p className="balance-history-note">
-          已记录 {recordedDays}/{points.length} 天，无采集记录的日期留空。{partialDays > 0 && "相邻有数据的日期以实线连接，部分合计可查看采集覆盖数量。"}
-        </p>
-      )}
-      <div className="balance-account-list">
-        {accounts.map(({ account }) => (
-          <div className="balance-account-item" key={account.id}>
-            <i
-              className={`account-status ${account.enabled ? account.status : "paused"}`}
-            />
-            <strong>{account.name}</strong>
-            <span>
-              {financialAmount(account.balance, account.currency)} · 今日 {financialAmount(account.today_used, account.currency)}
-            </span>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function AccountFinance({ data }: { data: Data }) {
-  const summaries = data.overview.account_summaries || [];
-  const currencyId = React.useId();
-  const [currency, setCurrency] = useState(summaries[0]?.currency || "");
-  const summary =
-    summaries.find((item) => item.currency === currency) || summaries[0];
-  const unit = summary?.currency || "";
-  const coverage = (known: number, complete: string) =>
-    summary && known < summary.accounts
-      ? `已采集 ${known}/${summary.accounts} 个账户`
-      : complete;
-  const minimum = summary?.minimum;
-  const accounts = data.accounts.filter(
-    (row) => row.account.currency.trim().toUpperCase() === unit,
-  );
-  return (
-    <>
-      {summaries.length > 1 && (
-        <div className="finance-currency">
-          <label htmlFor={currencyId}>统计单位</label>
-          <select
-            id={currencyId}
-            value={unit}
-            onChange={(event) => setCurrency(event.target.value)}
-          >
-            {summaries.map((item) => (
-              <option value={item.currency} key={item.currency}>
-                {item.currency || "未设置单位"}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
-      <div className="stats-grid finance-stats">
-        <Stat
-          label="总余额"
-          tone="balance"
-          value={financialAmount(summary?.balance ?? null, unit)}
-          icon={<Wallet size={18} />}
-          note={
-            minimum
-              ? `最低 ${minimum.name} ${financialAmount(minimum.balance, unit)}${summary && summary.balance_accounts < summary.accounts ? ` · 已采集 ${summary.balance_accounts}/${summary.accounts}` : ""}`
-              : "等待账户余额采集"
-          }
-        />
-        <Stat
-          label="今日总消费"
-          tone="cost"
-          value={financialAmount(summary?.today_used ?? null, unit)}
-          icon={<Receipt size={18} aria-hidden="true" />}
-          note={[
-            coverage(summary?.today_accounts || 0, "按上游实际扣费统计"),
-            summary?.today_collected_at
-              ? `最早采集 ${new Date(summary.today_collected_at).toLocaleTimeString("zh-CN", { hour12: false })}（非实时）`
-              : "成功采集后显示更新时间",
-          ].join(" · ")}
-        />
-        <Stat
-          label="累计消费"
-          tone="cost"
-          value={financialAmount(summary?.used ?? null, unit)}
-          icon={<Coins size={18} aria-hidden="true" />}
-          note={coverage(summary?.used_accounts || 0, "各账户累计实际扣费")}
-        />
-      </div>
-      {summary && <BalanceOverview summary={summary} accounts={accounts} />}
-    </>
-  );
-}
-
-function RequestActivity({
-  days,
-  retentionDays,
-}: {
-  days: RequestDay[];
-  retentionDays: number;
-}) {
-  const scroll = useRef<HTMLDivElement>(null);
-  const [selected, setSelected] = useState<string | null>(null);
-  const latest = days.at(-1)?.date;
-  useEffect(() => {
-    if (scroll.current) scroll.current.scrollLeft = scroll.current.scrollWidth;
-  }, [latest]);
-  if (!days.length) return null;
-  const active =
-    days.find((day) => day.date === selected) || days[days.length - 1];
-  const maximum = Math.max(1, ...days.map((day) => day.requests));
-  const total = days.reduce((sum, day) => sum + day.requests, 0);
-  const activeDays = days.filter((day) => day.requests > 0).length;
-  const offset = (new Date(`${days[0].date}T00:00:00Z`).getUTCDay() + 6) % 7;
-  const cells: (RequestDay | null)[] = [...Array(offset).fill(null), ...days];
-  while (cells.length % 7) cells.push(null);
-  const describe = (day: RequestDay) => {
-    if (!day.requests) return `${day.date}：无汇总记录`;
-    const cost = (day.cost_unknown_requests || 0) >= day.requests ? "费用无法估算" : `费用估算 $${((day.cost_micros || 0) / 1e6).toFixed(6)}`;
-    return `${day.date}：${day.requests.toLocaleString("zh-CN")} 次请求 · 输入 ${(day.input_tokens || 0).toLocaleString("zh-CN")} / 输出 ${(day.output_tokens || 0).toLocaleString("zh-CN")} Token · ${cost}${day.cost_unknown_requests ? ` · ${day.cost_unknown_requests} 次费用未知，未计入估算` : ""}`;
-  };
-  return (
-    <section className="panel request-activity">
-      <div className="panel-heading">
-        <div>
-          <h2 className="icon-heading"><Activity size={18} aria-hidden="true" />请求活跃度</h2>
-          <p>近一年 · 每格代表一天</p>
-        </div>
-        <span>
-          {total.toLocaleString("zh-CN")} 次请求 · {activeDays} 个活跃日
-        </span>
-      </div>
-      <div className="activity-scroll" ref={scroll}>
-        <div
-          className="activity-grid"
-          role="group"
-          aria-label="每日网关请求活跃度"
-        >
-          {cells.map((day, cellIndex) => {
-            if (!day)
-              return (
-                <span
-                  key={`padding-${cellIndex}`}
-                  className="activity-padding"
-                  aria-hidden="true"
-                />
-              );
-            const index = cellIndex - offset;
-            const level =
-              day.requests === 0 ? 0 : Math.ceil((day.requests / maximum) * 4);
-            return (
-              <button
-                key={day.date}
-                type="button"
-                className="activity-day activity-level"
-                data-date={day.date}
-                data-level={level}
-                title={describe(day)}
-                aria-label={describe(day)}
-                aria-pressed={active.date === day.date}
-                tabIndex={active.date === day.date ? 0 : -1}
-                onMouseEnter={() => setSelected(day.date)}
-                onFocus={() => setSelected(day.date)}
-                onClick={() => setSelected(day.date)}
-                onKeyDown={(event) => {
-                  const moves: Record<string, number> = {
-                    ArrowLeft: -7,
-                    ArrowRight: 7,
-                    ArrowUp: -1,
-                    ArrowDown: 1,
-                  };
-                  const move = moves[event.key];
-                  if (move === undefined) return;
-                  event.preventDefault();
-                  const next =
-                    days[Math.max(0, Math.min(days.length - 1, index + move))];
-                  event.currentTarget.parentElement
-                    ?.querySelector<HTMLButtonElement>(
-                      `[data-date="${next.date}"]`,
-                    )
-                    ?.focus();
-                }}
-              />
-            );
-          })}
-        </div>
-      </div>
-      <div className="activity-footer">
-        <span className="activity-inspector" aria-live="polite">
-          {describe(active)}
-        </span>
-        <div className="activity-legend" aria-label="颜色越深代表请求越多">
-          少
-          {[0, 1, 2, 3, 4].map((level) => (
-            <i
-              className="activity-level"
-              data-level={level}
-              key={level}
-              aria-hidden="true"
-            />
-          ))}
-          多
-        </div>
-      </div>
-      <p className="activity-note">
-        按北京时间自然日统计，每日汇总保留 {retentionDays} 天，逐条请求到期清理后仍保留汇总。
-      </p>
-    </section>
-  );
-}
-
-function Overview({
-  data,
-  monitor,
-  navigate,
-  addAccount,
-  addChannel,
-}: {
-  data: Data;
-  monitor: MonitorAccount;
-  navigate: (id: string) => void;
-  addAccount: () => void;
-  addChannel: () => void;
-}) {
-  const healthy = data.accounts.filter(
-    (r) => r.account.enabled && r.account.status === "ok",
-  ).length;
-  const enabled = data.accounts.filter((r) => r.account.enabled).length;
-  const pending = data.alerts.pending;
-  const { overview } = data;
-  const activity = overview.activity || [];
-  const lastDate = activity.at(-1)?.date || new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
-  const firstDate = activity[0]?.date || lastDate;
-  const [period, setPeriod] = useState<"today" | 1 | 7 | 14 | 30 | { start: string; end: string }>(1);
-  const [customOpen, setCustomOpen] = useState(false);
-  const [startDate, setStartDate] = useState(activity.at(-7)?.date || firstDate);
-  const [endDate, setEndDate] = useState(lastDate);
-  const [rangeError, setRangeError] = useState("");
-  const days = typeof period === "object"
-    ? activity.filter(day => day.date >= period.start && day.date <= period.end)
-    : activity.slice(period === "today" ? -1 : -period);
-  const totals = period === 1 ? overview : days.reduce((sum, day) => ({
-    requests: sum.requests + day.requests,
-    errors: sum.errors + day.errors,
-    input_tokens: sum.input_tokens + day.input_tokens,
-    output_tokens: sum.output_tokens + day.output_tokens,
-    cost_micros: sum.cost_micros + day.cost_micros,
-    cost_unknown_requests: sum.cost_unknown_requests + day.cost_unknown_requests,
-  }), { requests: 0, errors: 0, input_tokens: 0, output_tokens: 0, cost_micros: 0, cost_unknown_requests: 0 });
-  const periodLabel = typeof period === "object" ? "所选时段" : period === "today" ? "今日" : period === 1 ? "24 小时" : `${period} 天`;
-  const retentionStart = activity.at(-data.settings.request_summary_retention_days)?.date || firstDate;
-  const selectedStart = typeof period === "object" ? period.start : days[0]?.date;
-  // 与后端相同，使用当前小时及之前 23 个小时的汇总。
-  const hours = Array.from(
-    { length: 24 },
-    (_, i) => Math.floor(Date.now() / 3600000) * 3600 - (23 - i) * 3600,
-  ).filter(hour => period !== "today" || hour >= Date.parse(`${lastDate}T00:00:00+08:00`) / 1000);
-  const points = period === 1 || period === "today" ? hours.map((hour) => ({
-    ...(overview.series?.find((s) => s.hour === hour) ?? { requests: 0, errors: 0, input_tokens: 0, output_tokens: 0, cost_micros: 0, cost_unknown_requests: 0 }),
-    label: new Date(hour * 1000).toLocaleTimeString("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false }),
-    title: new Date(hour * 1000).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }),
-  })) : days.map((day) => ({ ...day, label: day.date.slice(5).replace("-", "/"), title: day.date }));
-  return (
-    <>
-      <AccountFinance data={data} />
-      <RequestActivity
-        days={overview.activity || []}
-        retentionDays={data.settings.request_summary_retention_days}
-      />
-      <div className="section-heading request-period-heading">
-        <h2 className="icon-heading"><Hash size={18} aria-hidden="true" />网关用量</h2>
-        <div className="balance-period" role="group" aria-label="网关用量统计时段">
-          {(["today", 1, 7, 14, 30] as const).map((value) => (
-            <button key={value} aria-pressed={period === value} onClick={() => { setPeriod(value); setCustomOpen(false); setRangeError(""); }}>
-              {value === "today" ? "今天" : value === 1 ? "近24个小时" : `${value}天`}
-            </button>
-          ))}
-          <button aria-pressed={typeof period === "object"} aria-expanded={customOpen} onClick={() => setCustomOpen(!customOpen)}>自定义</button>
-        </div>
-      </div>
-      {customOpen && (
-        <form className="request-date-range" onSubmit={(event) => {
-          event.preventDefault();
-          if (!startDate || !endDate) {
-            setRangeError("请选择开始日期和结束日期。");
-          } else if (startDate > endDate) {
-            setRangeError("开始日期不能晚于结束日期。");
-          } else if (startDate < firstDate || endDate > lastDate) {
-            setRangeError(`请选择 ${firstDate} 至 ${lastDate} 范围内的日期。`);
-          } else {
-            setPeriod({ start: startDate, end: endDate });
-            setRangeError("");
-          }
-        }}>
-          <Field label="开始日期">
-            <input type="date" required min={firstDate} max={lastDate} value={startDate} onChange={event => { setStartDate(event.target.value); setRangeError(""); }} />
-          </Field>
-          <Field label="结束日期">
-            <input type="date" required min={firstDate} max={lastDate} value={endDate} onChange={event => { setEndDate(event.target.value); setRangeError(""); }} />
-          </Field>
-          <button className="secondary" type="submit">应用</button>
-          {rangeError && <p className="form-error" role="alert">{rangeError}</p>}
-        </form>
-      )}
-      <div className="stats-grid">
-        <Stat
-          label="账户健康"
-          tone="balance"
-          value={
-            <>
-              {healthy}
-              <span className="stat-denominator"> / {enabled}</span>
-            </>
-          }
-          icon={<Server size={18} />}
-          note={
-            enabled === 0
-              ? "接入账户后开始采集"
-              : `${enabled - healthy} 个账户需要关注`
-          }
-        />
-        <Stat
-          label={`${periodLabel}请求`}
-          tone="traffic"
-          value={compact(totals.requests)}
-          icon={<Activity size={18} />}
-          note={`${totals.errors} 次失败`}
-        />
-        <Stat
-          label={`${periodLabel} Token`}
-          tone="usage"
-          value={compact(totals.input_tokens + totals.output_tokens)}
-          icon={<Hash size={18} aria-hidden="true" />}
-          note={`输入 ${compact(totals.input_tokens)} · 输出 ${compact(totals.output_tokens)}`}
-        />
-        <Stat
-          label={`${periodLabel}费用估算`}
-          tone="cost"
-          value={`$${money(totals.cost_micros / 1e6)}`}
-          icon={<Coins size={18} aria-hidden="true" />}
-          note={
-            [totals.cost_unknown_requests
-              ? `${totals.cost_unknown_requests} 次费用未知，未计入估算`
-              : "按请求完成时的价格估算",
-            "实时累计，以上游实际扣费为准",
-            pending ? `${pending} 条告警等待送达或发送失败` : ""].filter(Boolean).join(" · ")
-          }
-        />
-      </div>
-      <div className="overview-grid">
-        <section className="panel traffic" data-tone="traffic">
-          <div className="panel-heading">
-            <div>
-              <h2 className="icon-heading"><Activity size={18} aria-hidden="true" />请求趋势</h2>
-              <p>{typeof period === "object"
-                ? `${period.start} 至 ${period.end} · 按北京时间自然日（含首尾日期）`
-                : period === "today" ? "今天 · 北京时间零点至当前 · 按小时汇总"
-                  : period === 1 ? "近 24 个小时 · 包含当前小时" : `近 ${period} 天 · 按北京时间自然日（含今天）`}</p>
-              {period !== 1 && selectedStart && selectedStart < retentionStart && (
-                <p>每日汇总保留 {data.settings.request_summary_retention_days} 天，已清理的历史不计入统计。</p>
-              )}
-            </div>
-          </div>
-          <RequestTrend points={points} />
-        </section>
-        <section className="panel gateway-summary" data-tone="cost">
-          <div className="panel-heading">
-            <h2>网关状态</h2>
-            <Network size={18} />
-          </div>
-          <div className="gateway-number">
-            {
-              data.channels.filter(
-                (r) =>
-                  channelEnabled(r) &&
-                  new Date(r.cooldown_until).getTime() < Date.now(),
-              ).length
-            }
-            <span>条可用渠道</span>
-          </div>
-          <div className="summary-row">
-            <span>统一模型</span>
-            <strong>{data.groups.length}</strong>
-          </div>
-          <div className="summary-row">
-            <span>网关密钥</span>
-            <strong>{data.keys.length}</strong>
-          </div>
-          <div className="endpoint">
-            <span>API BASE URL</span>
-            <code>{location.origin}/v1</code>
-            <CopyButton text={`${location.origin}/v1`} />
-          </div>
-          <button className="text-button" onClick={() => navigate("models")}>
-            配置模型路由
-            <ChevronRight size={15} />
-          </button>
-        </section>
-      </div>
-      <RequestQuality range={typeof period === "object" ? `start=${period.start}&end=${period.end}` : period === 1 ? "" : `start=${days[0]?.date || lastDate}&end=${lastDate}`} refreshed={overview} />
-      <div className="section-heading">
-        <h2 className="icon-heading"><Server size={18} aria-hidden="true" />账户概况</h2>
-        <button className="text-button" onClick={() => navigate("accounts")}>
-          查看全部
-          <ChevronRight size={15} />
-        </button>
-      </div>
-      {data.accounts.length === 0 ? (
-        <div className="panel">
-          <Empty
-            title="连接你的第一个上游"
-            icon={<Unplug size={25} aria-hidden="true" />}
-            detail="接入 NewAPI 或 Sub2API，集中查看账户余额、订阅与告警。"
-            action={
-              <div className="inline-actions">
-                <button className="primary" onClick={addAccount}>
-                  <Plus size={16} />
-                  接入账户
-                </button>
-                <button className="secondary" onClick={addChannel}>
-                  添加直连渠道
-                </button>
-              </div>
-            }
-          />
-        </div>
-      ) : (
-        <AccountSections rows={data.accounts} limit={3}>
-          {(row) => (
-            <AccountCard
-              key={row.account.id}
-              row={row}
-              monitor={monitor}
-              channelCount={
-                data.channels.filter(
-                  (channel) => channel.channel.account_id === row.account.id,
-                ).length
-              }
-              openChannels={() =>
-                navigate(`accounts/${row.account.id}/channels`)
-              }
-              onClick={() => navigate(`accounts/${row.account.id}/channels`)}
-            />
-          )}
-        </AccountSections>
-      )}
-      <MonitoringPanels data={data} navigate={navigate} dialog={Dialog} />
-      <div className="recent-requests-panel">
-        <section className="panel">
-          <div className="panel-heading">
-            <h2 className="icon-heading"><FileText size={18} aria-hidden="true" />最近请求</h2>
-            <button
-              className="text-button"
-              onClick={() => navigate("requests")}
-            >
-              全部
-              <ChevronRight size={14} />
-            </button>
-          </div>
-          <Requests
-            rows={data.requests.slice(0, 5)}
-            channels={data.channels}
-            small
-          />
-        </section>
-      </div>
-    </>
-  );
-}
-function Stat({
-  label,
-  value,
-  note,
-  icon,
-  tone = "traffic",
-}: {
-  label: string;
-  value: React.ReactNode;
-  note: string;
-  icon: React.ReactNode;
-  tone?: DataTone;
-}) {
-  return (
-    <div className="stat-card" data-tone={tone}>
-      <div className="stat-label">
-        {label}
-        {icon}
-      </div>
-      <div className="stat-value">{value}</div>
-      <div className="stat-note">{note}</div>
-    </div>
-  );
-}
 function AccountGroups({ account }: { account: Account }) {
   const [expanded, setExpanded] = useState(false);
   const rates = accountRates(account);
@@ -4214,14 +3377,13 @@ function KeyControls({ item, availableModels, close, saved }: { item: Key; avail
     <div className="full"><KeyModelPicker available={availableModels} selected={models} change={setModels} disabled={busy} /></div>
   </div><p className="field-hint">达到预算后阻止新请求，在途请求仍可产生费用；未知费用不计入，不能视为上游账单硬上限。周期用量自升级后开始记录，按请求开始日计入；限流窗口在服务重启后重置。</p>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-footer"><button type="button" className="secondary" onClick={close}>取消</button><Button className="primary" busy={busy} type="submit">保存限制</Button></div></form></Dialog>;
 }
-function Requests({ rows, channels, small }: { rows: RequestLog[]; channels: ChannelRow[]; small?: boolean }) {
-  return <RequestList rows={rows} channels={channels} small={small} dialog={Dialog} />;
-}
 function SettingsForm({
   settings,
   run,
+  section,
 }: {
   settings: Settings;
+  section: SettingsSection;
   run: (f: () => Promise<unknown>, s?: string) => Promise<void>;
 }) {
   const [form, setForm] = useState({
@@ -4237,33 +3399,33 @@ function SettingsForm({
       onSubmit={async (e) => {
         e.preventDefault();
         setBusy(true);
-        await run(() => api("/settings", "PUT", form), "系统设置已保存");
+        await run(async()=>{const current=await api<Settings>("/settings");const next=settingsSection(current,form,section);await api("/settings","PUT",next);setForm(next);}, "系统设置已保存");
         setBusy(false);
       }}
     >
       <div className="panel-heading">
         <div>
-          <h2 className="icon-heading"><Settings2 size={18} aria-hidden="true" />告警阈值与运行设置</h2>
-          <p>调整告警门槛、任务周期与历史保留时间。</p>
+          <h2 className="icon-heading"><Settings2 size={18} aria-hidden="true" />{section==="runtime" ? "网关与采集运行参数" : section==="notifications" ? "告警阈值与通知默认值" : "历史与摘要保留"}</h2>
+          <p>{section==="runtime" ? "调整转发超时、采集并发与同步周期。" : section==="notifications" ? "调整告警门槛、同类告警冷却与新渠道默认重试次数。" : "调整保存期限，缩短期限会自动清理超期数据。"}</p>
         </div>
       </div>
       <div className="settings-fields">
-        <details className="runtime-options"><summary><BellRing size={15} aria-hidden="true" />告警阈值与重试默认值</summary>
+        {section==="notifications" && <details open className="runtime-options"><summary><BellRing size={15} aria-hidden="true" />告警阈值与重试默认值</summary>
           <div className="form-grid">{([
             ["rate_change_percent", "倍率变动通知门槛（%）", 0, 10000], ["subscription_low_percent", "订阅剩余比例阈值（%）", 1, 100], ["subscription_expiry_hours", "订阅临近到期（小时）", 1, 8760], ["notification_retries", "新通知渠道默认尝试次数", 1, 30],
           ] as const).map(([key, label, min, max]) => <Field label={label} key={key}><input required type="number" min={min} max={max} step={key === "rate_change_percent" ? "any" : "1"} value={form.runtime[key]} onChange={event => setRuntime(key, Number(event.target.value))} /></Field>)}</div>
           <p className="field-hint">倍率门槛仅影响推送，真实变化仍记入本地历史；分组新增和移除始终符合倍率通知门槛。</p>
-        </details>
-        <details className="runtime-options"><summary><Timer size={15} aria-hidden="true" />转发超时与采集并发</summary><div className="form-grid">{([
+        </details>}
+        {section==="runtime" && <details open className="runtime-options"><summary><Timer size={15} aria-hidden="true" />转发超时与采集并发</summary><div className="form-grid">{([
           ["first_output_seconds", "等待首个有效输出（秒）", 1, 3600], ["stream_idle_seconds", "流无数据超时（秒）", 1, 3600], ["request_timeout_seconds", "整次请求总时间上限（秒）", 1, 10800], ["max_attempts", "整次请求最多尝试次数", 1, 32], ["monitor_concurrency", "账户采集并发数", 1, 8],
-        ] as const).map(([key, label, min, max]) => <Field label={label} key={key}><input required type="number" min={min} max={max} value={form.runtime[key]} onChange={event => setRuntime(key, Number(event.target.value))} /></Field>)}</div><p className="field-hint">流式开始输出后按无数据超时和整次请求总时间上限控制；客户端取消请求后停止后续尝试。</p></details>
-        <details className="runtime-options"><summary><History size={15} />排障摘要保留</summary><div className="form-grid"><Field label="保留天数（1–90）"><input type="number" min="1" max="90" required value={form.runtime.request_digest_days || 7} onChange={event => setRuntime("request_digest_days", Number(event.target.value))} /></Field><Field label="最多条数（1–100000）"><input type="number" min="1" max="100000" required value={form.runtime.request_digest_limit || 5000} onChange={event => setRuntime("request_digest_limit", Number(event.target.value))} /></Field></div><p className="field-hint">摘要仅含请求元数据与固定诊断分类，不保存正文或上游错误原文；同时受天数与条数限制，自动清理不改变用量及预算。</p></details>
-        <details className="runtime-options"><summary><RefreshCw size={15} aria-hidden="true" />定时价格同步与模型发现</summary><div className="form-grid">
+        ] as const).map(([key, label, min, max]) => <Field label={label} key={key}><input required type="number" min={min} max={max} value={form.runtime[key]} onChange={event => setRuntime(key, Number(event.target.value))} /></Field>)}</div><p className="field-hint">流式开始输出后按无数据超时和整次请求总时间上限控制；客户端取消请求后停止后续尝试。</p></details>}
+        {section==="data" && <details open className="runtime-options"><summary><History size={15} />排障摘要保留</summary><div className="form-grid"><Field label="保留天数（1–90）"><input type="number" min="1" max="90" required value={form.runtime.request_digest_days || 7} onChange={event => setRuntime("request_digest_days", Number(event.target.value))} /></Field><Field label="最多条数（1–100000）"><input type="number" min="1" max="100000" required value={form.runtime.request_digest_limit || 5000} onChange={event => setRuntime("request_digest_limit", Number(event.target.value))} /></Field></div><p className="field-hint">摘要仅含请求元数据与固定诊断分类，不保存正文或上游错误原文；同时受天数与条数限制，自动清理不改变用量及预算。</p></details>}
+        {section==="runtime" && <details open className="runtime-options"><summary><RefreshCw size={15} aria-hidden="true" />定时价格同步与模型发现</summary><div className="form-grid">
           <Field label="价格同步周期（小时）" hint="0 表示关闭，手动价格保持不变。"><input required type="number" min="0" max="720" value={form.runtime.price_sync_hours} onChange={event => setRuntime("price_sync_hours", Number(event.target.value))} /></Field>
           <Field label="模型发现周期（小时）" hint="0 表示关闭，发现结果在渠道中预览，确认同步后修改已选模型。"><input required type="number" min="0" max="720" value={form.runtime.model_sync_hours} onChange={event => setRuntime("model_sync_hours", Number(event.target.value))} /></Field>
-        </div>{settings.sync_tasks?.map(task => <p className="field-hint" key={task.name}>{task.name === "prices" ? "价格同步" : "模型发现"}：{task.started_at && !task.finished_at ? "正在运行" : task.summary || "尚未执行"} · 上次成功 {date(task.last_success_at)}{task.error && ` · ${task.error}`}</p>)}</details>
+        </div>{settings.sync_tasks?.map(task => <p className="field-hint" key={task.name}>{task.name === "prices" ? "价格同步" : "模型发现"}：{task.started_at && !task.finished_at ? "正在运行" : task.summary || "尚未执行"} · 上次成功 {date(task.last_success_at)}{task.error && ` · ${task.error}`}</p>)}</details>}
         <div className="form-grid">
-          <Field label="同类告警冷却（分钟）">
+          {section==="notifications" && <Field label="同类告警冷却（分钟）">
             <input
               required
               type="number"
@@ -4274,8 +3436,8 @@ function SettingsForm({
                 set("alert_cooldown_minutes", Number(e.target.value))
               }
             />
-          </Field>
-          <Field label="监控快照与告警保留天数">
+          </Field>}
+          {section==="data" && <><Field label="监控快照与告警保留天数">
             <input
               required
               type="number"
@@ -4287,13 +3449,13 @@ function SettingsForm({
           </Field>
           <Field label="用量统计保留天数" hint="按小时、日期及渠道/模型汇总请求量、Token、费用与性能，默认 365 天。">
             <input required type="number" min="1" max="365" value={form.request_summary_retention_days} onChange={event => set("request_summary_retention_days", Number(event.target.value))} />
-          </Field>
+          </Field></>}
         </div>
-        <div className="settings-notes">
+        {section==="data" && <div className="settings-notes">
           <p className="field-hint">用量统计按北京时间自然日保留，包含当天，每小时自动清理。缩短周期后，超期统计会自动删除。</p>
           <p className="field-hint">近期请求和正文仅缓存在内存中，最多 50 条已结束请求、32 MiB，重启后清空；进行中请求另计。</p>
-          <p className="field-hint">通知失败按各渠道设置独立重试；修改默认值仅影响新建渠道。</p>
-        </div>
+        </div>}
+        {section==="notifications" && <p className="field-hint">通知失败按各渠道设置独立重试；修改默认值仅影响新建渠道。</p>}
       </div>
       <div className="form-footer">
         <Button busy={busy} className="primary" type="submit">

@@ -33,3 +33,18 @@ test("内容高度可伸缩，保留宽度并限制在显示器工作区内", ()
   assert.ok(expanded.y + expanded.height * expanded.scaleFactor <= 1040);
   assert.equal(resolveWindowGeometry(saved, [], 1.5, undefined, 2000).height, 900);
 });
+
+test("四档 DPI 下折叠和展开不改变逻辑宽度，并留在含任务栏偏移的工作区", () => {
+  for(const scaleFactor of [1,1.25,1.5,2]) {
+    const monitor={position:{x:-2560,y:0},size:{width:2560,height:1440},workArea:{position:{x:-2480,y:40},size:{width:2480,height:1360}},scaleFactor};
+    for(const width of [360,400,540,720])for(const contentHeight of [100,5000]) {
+      const result=resolveWindowGeometry({x:-30,y:1400,width,height:720,scaleFactor},[monitor],scaleFactor,monitor,contentHeight);
+      assert.equal(result.width,width);
+      assert.ok(result.height>=360 && result.height<=900);
+      assert.ok(result.x>=monitor.workArea.position.x);
+      assert.ok(result.y>=monitor.workArea.position.y);
+      assert.ok(result.x+width*scaleFactor<=monitor.workArea.position.x+monitor.workArea.size.width);
+      assert.ok(result.y+result.height*scaleFactor<=monitor.workArea.position.y+monitor.workArea.size.height);
+    }
+  }
+});
