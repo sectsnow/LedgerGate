@@ -125,7 +125,7 @@ func (doc transferDocument) validate() error {
 	}
 	keyHashes := map[string]bool{}
 	for _, row := range doc.Keys {
-		input := keyInput{Name: row.Name, AllowedModels: row.AllowedModels, BudgetMicros: row.BudgetMicros}
+		input := keyInput{Name: row.Name, AllowedModels: row.AllowedModels, BudgetMicros: row.BudgetMicros, DailyBudgetMicros: row.DailyBudgetMicros, MonthlyBudgetMicros: row.MonthlyBudgetMicros, MaxConcurrent: row.MaxConcurrent, RequestsPerMinute: row.RequestsPerMinute}
 		hash, err := hex.DecodeString(row.Hash)
 		if !addID(keyIDs, row.ID) || input.validate() != nil || row.UsedMicros < 0 || len(row.Prefix) > 30 || err != nil || len(hash) != 32 || keyHashes[row.Hash] || row.Token != "" && (len(row.Token) > 8192 || digest(row.Token) != row.Hash) || !doc.IncludeCredentials && row.Token != "" {
 			return errors.New("网关密钥配置、摘要或累计费用无效")

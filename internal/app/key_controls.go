@@ -11,15 +11,27 @@ import (
 )
 
 type keyInput struct {
-	Name          string     `json:"name"`
-	Enabled       *bool      `json:"enabled"`
-	ExpiresAt     *time.Time `json:"expires_at"`
-	AllowedModels []string   `json:"allowed_models"`
-	BudgetMicros  *int64     `json:"budget_micros"`
+	Name                string     `json:"name"`
+	Enabled             *bool      `json:"enabled"`
+	ExpiresAt           *time.Time `json:"expires_at"`
+	AllowedModels       []string   `json:"allowed_models"`
+	BudgetMicros        *int64     `json:"budget_micros"`
+	DailyBudgetMicros   *int64     `json:"daily_budget_micros"`
+	MonthlyBudgetMicros *int64     `json:"monthly_budget_micros"`
+	MaxConcurrent       int        `json:"max_concurrent"`
+	RequestsPerMinute   int        `json:"requests_per_minute"`
 }
 
 func (input *keyInput) validate() error {
 	input.Name = strings.TrimSpace(input.Name)
+	for _, budget := range []*int64{input.BudgetMicros, input.DailyBudgetMicros, input.MonthlyBudgetMicros} {
+		if budget != nil && (*budget < 0 || *budget > 9_007_199_254_740_991) {
+			return errors.New("预算须为非负金额且不能超过安全整数范围")
+		}
+	}
+	if input.MaxConcurrent < 0 || input.MaxConcurrent > 1000 || input.RequestsPerMinute < 0 || input.RequestsPerMinute > 10000 {
+		return errors.New("并发上限须为 0–1000，每分钟请求数须为 0–10000；0 表示不限")
+	}
 	if input.Name == "" || len(input.Name) > 100 || len(input.AllowedModels) > 500 || input.BudgetMicros != nil && *input.BudgetMicros < 0 {
 		return errors.New("请检查密钥名称、模型列表和预算")
 	}
@@ -53,6 +65,7 @@ func (a *App) createAPIKey(c *gin.Context) {
 		enabled = *input.Enabled
 	}
 	key := APIKey{Name: input.Name, Prefix: token[:11], Digest: digest(token), TokenCipher: a.seal(token), CanCopy: true, Enabled: enabled, ExpiresAt: input.ExpiresAt, AllowedModels: input.AllowedModels, BudgetMicros: input.BudgetMicros}
+	key.DailyBudgetMicros, key.MonthlyBudgetMicros, key.MaxConcurrent, key.RequestsPerMinute = input.DailyBudgetMicros, input.MonthlyBudgetMicros, input.MaxConcurrent, input.RequestsPerMinute
 	if a.DB.Create(&key).Error != nil {
 		fail(c, 500, "密钥保存失败")
 		return
@@ -75,6 +88,7 @@ func (a *App) updateAPIKey(c *gin.Context) {
 		return
 	}
 	updates := map[string]any{"name": input.Name, "expires_at": input.ExpiresAt, "budget_micros": input.BudgetMicros, "allowed_models": jsonString(input.AllowedModels)}
+	updates["daily_budget_micros"], updates["monthly_budget_micros"], updates["max_concurrent"], updates["requests_per_minute"] = input.DailyBudgetMicros, input.MonthlyBudgetMicros, input.MaxConcurrent, input.RequestsPerMinute
 	if input.Enabled != nil {
 		updates["enabled"] = *input.Enabled
 	}
@@ -91,7 +105,7 @@ func (a *App) updateAPIKey(c *gin.Context) {
 }
 
 func debitKey(tx *gorm.DB, log *RequestLog) error {
-	if log.KeyID == 0 || log.CostMicros <= 0 {
+	if log.KeyID == 0 || log.CostMicros <= 0 || log.CostStatus == "unknown" {
 		return nil
 	}
 	const maximum = int64(1<<63 - 1)

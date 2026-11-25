@@ -77,6 +77,9 @@ func (a *App) Router() http.Handler {
 		c.Status(204)
 	})
 	api.GET("/overview", a.overview)
+	api.GET("/request-summaries", a.listRequestSummaries)
+	api.GET("/request-summaries/:id", a.requestSummaryDetail)
+	api.GET("/accounts/:id/collection", a.accountCollection)
 	api.GET("/widget/credential", a.widgetCredentialStatus)
 	api.POST("/widget/credential", a.createWidgetCredential)
 	api.DELETE("/widget/credential", a.revokeWidgetCredential)
@@ -176,8 +179,13 @@ func (a *App) Router() http.Handler {
 		for i := range keys {
 			keys[i].CanCopy = keys[i].TokenCipher != ""
 		}
+		if err := a.populateKeyUsage(keys, time.Now()); err != nil {
+			fail(c, 500, "读取密钥用量失败")
+			return
+		}
 		c.JSON(200, keys)
 	})
+	api.GET("/keys/:id/usage", a.keyUsageHistory)
 	api.POST("/keys", a.createAPIKey)
 	api.PUT("/keys/:id", a.updateAPIKey)
 	api.POST("/keys/:id/copy", func(c *gin.Context) {
@@ -359,6 +367,7 @@ func (a *App) saveAccount(c *gin.Context) {
 	}
 	original := account
 	if account.BaseURL != base || account.Kind != input.Kind || account.Username != input.Username || account.AuthMode != input.AuthMode {
+		account.CollectionState = ""
 		account.Cookie = ""
 		account.Token = ""
 		account.RefreshToken = ""
@@ -370,6 +379,7 @@ func (a *App) saveAccount(c *gin.Context) {
 		account.Used = nil
 		account.TodayUsed = nil
 		account.TodayCollectedAt = nil
+		account.CollectionState = ""
 		account.TodayDate = ""
 		account.Status = "pending"
 	}
@@ -502,7 +512,7 @@ func (a *App) deleteAccount(c *gin.Context) {
 				return err
 			}
 		}
-		for _, model := range []any{&Snapshot{}, &Alert{}, &AlertState{}} {
+		for _, model := range []any{&Snapshot{}, &Alert{}, &AlertState{}, &CollectionEvent{}} {
 			if err := tx.Where("account_id = ?", id).Delete(model).Error; err != nil {
 				return err
 			}

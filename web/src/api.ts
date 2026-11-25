@@ -217,6 +217,15 @@ export type Key = {
   expires_at: string | null;
   allowed_models: string[] | null;
   budget_micros: number | null;
+  daily_budget_micros: number | null;
+  monthly_budget_micros: number | null;
+  max_concurrent: number;
+  requests_per_minute: number;
+  daily_used_micros: number;
+  monthly_used_micros: number;
+  daily_reset_at: string | null;
+  monthly_reset_at: string | null;
+  active_requests: number;
   used_micros: number;
   created_at: string;
 };
@@ -266,6 +275,7 @@ export type RequestLog = {
   retry_at?: string | null;
   finish_reason?: string;
   incomplete_reason?: string;
+  summary_only?: boolean;
 };
 export type RequestListResult = { items: RequestLog[]; total: number; active: number };
 export type RequestDetail = {
@@ -333,6 +343,8 @@ export type RequestCostDetail = {
   rate_group: string;
 };
 export type RuntimeOptions = {
+  request_digest_days: number;
+  request_digest_limit: number;
   first_output_seconds: number;
   stream_idle_seconds: number;
   request_timeout_seconds: number;

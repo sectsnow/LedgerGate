@@ -110,8 +110,9 @@ func groupPricingUpdates(price *modelPricing) map[string]any {
 }
 
 // 调用方持有账户采集锁；同步失败或全量同步占用锁时，下次采集继续检查报价。
-func (a *App) syncAccountRatePrices(parent context.Context, account Account) error {
+func (a *App) syncAccountRatePrices(parent context.Context, account Account) (resultErr error) {
 	if !a.priceSyncMu.TryLock() {
+		a.priceCollectionOutcome(account, "pending", "其他价格同步正在运行，后续账户采集重试", false)
 		return nil
 	}
 	defer a.priceSyncMu.Unlock()
@@ -147,8 +148,16 @@ func (a *App) syncAccountRatePrices(parent context.Context, account Account) err
 		}
 	}
 	if len(selected) == 0 {
+		a.priceCollectionOutcome(account, "unchanged", "关联自动报价无需更新，或尚无可匹配报价", false)
 		return nil
 	}
+	defer func() {
+		status, message := "ok", "受影响路由报价已更新，仅影响后续请求"
+		if resultErr != nil {
+			status, message = "failed", "报价更新失败，保留旧报价，下次采集重试"
+		}
+		a.priceCollectionOutcome(account, status, message, true)
+	}()
 	ctx, cancel := context.WithTimeout(parent, 15*time.Second)
 	defer cancel()
 	catalog, fetchErr := a.fetchAccountPrices(ctx, account)

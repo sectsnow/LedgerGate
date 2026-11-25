@@ -27,6 +27,7 @@ type Account struct {
 	TodayUsed        *float64   `json:"today_used"`
 	TodayDate        string     `json:"today_date"`
 	TodayCollectedAt *time.Time `json:"today_collected_at"`
+	CollectionState  string     `json:"collection_state" gorm:"not null;default:''"`
 	Status           string     `json:"status"`
 	LastError        string     `json:"last_error"`
 	Rates            string     `json:"rates"`
@@ -105,18 +106,27 @@ type Route struct {
 }
 
 type APIKey struct {
-	ID            uint       `json:"id" gorm:"primaryKey"`
-	Name          string     `json:"name"`
-	Prefix        string     `json:"prefix"`
-	Digest        string     `json:"-" gorm:"uniqueIndex"`
-	TokenCipher   string     `json:"-"`
-	CanCopy       bool       `json:"can_copy" gorm:"-"`
-	Enabled       bool       `json:"enabled"`
-	ExpiresAt     *time.Time `json:"expires_at"`
-	AllowedModels []string   `json:"allowed_models" gorm:"serializer:json;type:text"`
-	BudgetMicros  *int64     `json:"budget_micros"`
-	UsedMicros    int64      `json:"used_micros" gorm:"not null;default:0"`
-	CreatedAt     time.Time  `json:"created_at"`
+	ID                  uint       `json:"id" gorm:"primaryKey"`
+	Name                string     `json:"name"`
+	Prefix              string     `json:"prefix"`
+	Digest              string     `json:"-" gorm:"uniqueIndex"`
+	TokenCipher         string     `json:"-"`
+	CanCopy             bool       `json:"can_copy" gorm:"-"`
+	Enabled             bool       `json:"enabled"`
+	ExpiresAt           *time.Time `json:"expires_at"`
+	AllowedModels       []string   `json:"allowed_models" gorm:"serializer:json;type:text"`
+	BudgetMicros        *int64     `json:"budget_micros"`
+	DailyBudgetMicros   *int64     `json:"daily_budget_micros"`
+	MonthlyBudgetMicros *int64     `json:"monthly_budget_micros"`
+	MaxConcurrent       int        `json:"max_concurrent" gorm:"not null;default:0"`
+	RequestsPerMinute   int        `json:"requests_per_minute" gorm:"not null;default:0"`
+	DailyUsedMicros     int64      `json:"daily_used_micros" gorm:"-"`
+	MonthlyUsedMicros   int64      `json:"monthly_used_micros" gorm:"-"`
+	DailyResetAt        *time.Time `json:"daily_reset_at" gorm:"-"`
+	MonthlyResetAt      *time.Time `json:"monthly_reset_at" gorm:"-"`
+	ActiveRequests      int        `json:"active_requests" gorm:"-"`
+	UsedMicros          int64      `json:"used_micros" gorm:"not null;default:0"`
+	CreatedAt           time.Time  `json:"created_at"`
 }
 
 type Session struct {
@@ -125,6 +135,7 @@ type Session struct {
 }
 
 type RequestLog struct {
+	SummaryOnly        bool               `json:"summary_only,omitempty" gorm:"-"`
 	ID                 uint               `json:"id" gorm:"primaryKey"`
 	MetricsVersion     int                `json:"metrics_version" gorm:"not null;default:0"`
 	RequestID          string             `json:"request_id" gorm:"index"`
@@ -210,6 +221,12 @@ type RequestHour struct {
 	SemanticFirstTokenCount int64 `gorm:"not null;default:0"`
 	GenerationMS            int64
 	GenerationTokens        int64
+	ObservedRequests        int64 `gorm:"not null;default:0"`
+	FirstAttemptSuccesses   int64 `gorm:"not null;default:0"`
+	RetriedSuccesses        int64 `gorm:"not null;default:0"`
+	FailedRequests          int64 `gorm:"not null;default:0"`
+	AttemptOverheadMS       int64 `gorm:"not null;default:0"`
+	LastRequestUnix         int64 `json:"last_request_unix"`
 }
 
 type Alert struct {

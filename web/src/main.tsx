@@ -92,6 +92,10 @@ import { GroupRoutingSummary, RouteRoutingStatus, RoutingStrategyIcon, useGroupR
 import { AnnouncementList, MonitorHistory, MonitoringPanels } from "./MonitorActivity";
 import ThemePicker from "./ThemePicker";
 import RequestQuality from "./RequestQuality";
+import AccountCollection from "./AccountCollection";
+import KeyUsagePanel, { KeyBudgetStatus } from "./KeyUsagePanel";
+import { budgetMicros } from "./moneyInput";
+import "./gateway-operations.css";
 import RequestTrend from "./RequestTrend";
 import BackupPanel from "./BackupPanel";
 import ProxySettings from "./ProxySettings";
@@ -1890,6 +1894,7 @@ function AccountCard({
         </div>
       )}
       <AccountGroups account={account} />
+      <AccountCollection account={account} />
       {account.last_error && <p className="card-error">{account.last_error}</p>}
       {account.warnings && <p className="card-error">{account.warnings}</p>}
       <div className="account-card-bottom">
@@ -4041,6 +4046,7 @@ function Keys({
   const [secret, setSecret] = useState("");
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<Key | null>(null);
+  const [usageKey, setUsageKey] = useState<Key | null>(null);
   return (
     <>
       <div className="panel key-create">
@@ -4110,12 +4116,14 @@ function Keys({
                     <td>{date(key.created_at)}</td>
                     <td>
                       <strong>${money((key.used_micros || 0) / 1e6)} / {key.budget_micros == null ? "不限预算" : `$${money(key.budget_micros / 1e6)}`}</strong>
+                      <KeyBudgetStatus item={key} />
                       <small className="table-sub">{key.enabled ? key.expires_at && new Date(key.expires_at).getTime() <= Date.now() ? "已到期" : "已启用" : "已停用"}{key.expires_at && ` · 到期 ${date(key.expires_at)}`}</small>
                       <small className="table-sub">{key.allowed_models?.length ? `可用模型：${key.allowed_models.join("、")}` : "全部模型"}</small>
                     </td>
                     <td>
                       <div className="inline-actions">
                         <button className="text-button" onClick={() => setEditing(key)}>编辑限制</button>
+                        <button className="text-button" onClick={() => setUsageKey(key)}>用量历史</button>
                         <span
                           title={
                             key.can_copy
@@ -4157,6 +4165,7 @@ function Keys({
           </div>
         )}
       </div>
+      {usageKey && <Dialog title={`${usageKey.name} · 周期用量`} close={() => setUsageKey(null)}><KeyUsagePanel item={usageKey} /></Dialog>}
       {editing && <KeyControls item={editing} availableModels={data.groups.map(group => group.name)} close={() => setEditing(null)} saved={async () => { await run(async () => {}); }} />}
       {secret && (
         <Dialog title="保存你的网关密钥" close={() => setSecret("")}>
@@ -4183,28 +4192,27 @@ function KeyControls({ item, availableModels, close, saved }: { item: Key; avail
   const [models, setModels] = useState(item.allowed_models || []);
   const [expiry, setExpiry] = useState(item.expires_at ? new Date(new Date(item.expires_at).getTime() + 8 * 3600000).toISOString().slice(0, 10) : "");
   const [budget, setBudget] = useState(item.budget_micros == null ? "" : (item.budget_micros / 1e6).toString());
+  const [daily, setDaily] = useState(item.daily_budget_micros == null ? "" : (item.daily_budget_micros / 1e6).toString());
+  const [monthly, setMonthly] = useState(item.monthly_budget_micros == null ? "" : (item.monthly_budget_micros / 1e6).toString());
+  const [concurrent, setConcurrent] = useState(item.max_concurrent || 0), [rpm, setRPM] = useState(item.requests_per_minute || 0);
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
   return <Dialog title="编辑网关密钥限制" close={close}><form onSubmit={async event => {
     event.preventDefault(); setError(""); setBusy(true);
     try {
-      let amount: number | null = null;
-      if (budget.trim() !== "") {
-        if (!/^\d+(\.\d{1,6})?$/.test(budget.trim())) throw new Error("预算须为非负美元金额，最多 6 位小数。");
-        const [whole, fraction = ""] = budget.trim().split(".");
-        const micros = BigInt(whole) * 1000000n + BigInt(fraction.padEnd(6, "0"));
-        if (micros > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("预算金额过大。");
-        amount = Number(micros);
-      }
-      await api(`/keys/${item.id}`, "PUT", { name, enabled, allowed_models: models, expires_at: expiry ? new Date(`${expiry}T23:59:59.999+08:00`).toISOString() : null, budget_micros: amount });
+      await api(`/keys/${item.id}`, "PUT", { name, enabled, allowed_models: models, expires_at: expiry ? new Date(`${expiry}T23:59:59.999+08:00`).toISOString() : null, budget_micros: budgetMicros(budget), daily_budget_micros: budgetMicros(daily), monthly_budget_micros: budgetMicros(monthly), max_concurrent: concurrent, requests_per_minute: rpm });
       await saved(); close();
     } catch (error) { setError((error as Error).message); } finally { setBusy(false); }
   }}><div className="form-grid">
     <Field label="密钥名称"><input required maxLength={100} value={name} onChange={event => setName(event.target.value)} /></Field>
     <Field label="累计预算上限（美元）" hint="留空不限，0 表示禁止新请求；修改上限不会清零累计费用。"><input inputMode="decimal" value={budget} onChange={event => setBudget(event.target.value)} /></Field>
+    <Field label="每日预算（美元）" hint="北京时间每日零点重置；留空不限，0 禁止新请求。"><input inputMode="decimal" value={daily} onChange={event => setDaily(event.target.value)} /></Field>
+    <Field label="每月预算（美元）" hint="北京时间每月 1 日零点重置；留空不限。"><input inputMode="decimal" value={monthly} onChange={event => setMonthly(event.target.value)} /></Field>
+    <Field label="最大并发请求" hint="0 不限；流式请求持续占用直到结束。"><input type="number" required min="0" max="1000" value={concurrent} onChange={event => setConcurrent(Number(event.target.value))} /></Field>
+    <Field label="每分钟请求上限" hint="0 不限；滚动 60 秒窗口。"><input type="number" required min="0" max="10000" value={rpm} onChange={event => setRPM(Number(event.target.value))} /></Field>
     <Field label="有效期截至（北京时间）" hint="包含所选日期；留空表示不过期。"><input type="date" value={expiry} onChange={event => setExpiry(event.target.value)} /></Field>
     <label className="checkbox"><input type="checkbox" checked={enabled} onChange={event => setEnabled(event.target.checked)} />启用此密钥</label>
     <div className="full"><KeyModelPicker available={availableModels} selected={models} change={setModels} disabled={busy} /></div>
-  </div><p className="field-hint">达到预算后阻止新请求，已在进行中的请求仍可产生费用；费用以网关记录的估算为准。</p>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-footer"><button type="button" className="secondary" onClick={close}>取消</button><Button className="primary" busy={busy} type="submit">保存限制</Button></div></form></Dialog>;
+  </div><p className="field-hint">达到预算后阻止新请求，在途请求仍可产生费用；未知费用不计入，不能视为上游账单硬上限。周期用量自升级后开始记录，按请求开始日计入；限流窗口在服务重启后重置。</p>{error && <p className="form-error" role="alert">{error}</p>}<div className="form-footer"><button type="button" className="secondary" onClick={close}>取消</button><Button className="primary" busy={busy} type="submit">保存限制</Button></div></form></Dialog>;
 }
 function Requests({ rows, channels, small }: { rows: RequestLog[]; channels: ChannelRow[]; small?: boolean }) {
   return <RequestList rows={rows} channels={channels} small={small} dialog={Dialog} />;
@@ -4249,6 +4257,7 @@ function SettingsForm({
         <details className="runtime-options"><summary><Timer size={15} aria-hidden="true" />转发超时与采集并发</summary><div className="form-grid">{([
           ["first_output_seconds", "等待首个有效输出（秒）", 1, 3600], ["stream_idle_seconds", "流无数据超时（秒）", 1, 3600], ["request_timeout_seconds", "整次请求总时间上限（秒）", 1, 10800], ["max_attempts", "整次请求最多尝试次数", 1, 32], ["monitor_concurrency", "账户采集并发数", 1, 8],
         ] as const).map(([key, label, min, max]) => <Field label={label} key={key}><input required type="number" min={min} max={max} value={form.runtime[key]} onChange={event => setRuntime(key, Number(event.target.value))} /></Field>)}</div><p className="field-hint">流式开始输出后按无数据超时和整次请求总时间上限控制；客户端取消请求后停止后续尝试。</p></details>
+        <details className="runtime-options"><summary><History size={15} />排障摘要保留</summary><div className="form-grid"><Field label="保留天数（1–90）"><input type="number" min="1" max="90" required value={form.runtime.request_digest_days || 7} onChange={event => setRuntime("request_digest_days", Number(event.target.value))} /></Field><Field label="最多条数（1–100000）"><input type="number" min="1" max="100000" required value={form.runtime.request_digest_limit || 5000} onChange={event => setRuntime("request_digest_limit", Number(event.target.value))} /></Field></div><p className="field-hint">摘要仅含请求元数据与固定诊断分类，不保存正文或上游错误原文；同时受天数与条数限制，自动清理不改变用量及预算。</p></details>
         <details className="runtime-options"><summary><RefreshCw size={15} aria-hidden="true" />定时价格同步与模型发现</summary><div className="form-grid">
           <Field label="价格同步周期（小时）" hint="0 表示关闭，手动价格保持不变。"><input required type="number" min="0" max="720" value={form.runtime.price_sync_hours} onChange={event => setRuntime("price_sync_hours", Number(event.target.value))} /></Field>
           <Field label="模型发现周期（小时）" hint="0 表示关闭，发现结果在渠道中预览，确认同步后修改已选模型。"><input required type="number" min="0" max="720" value={form.runtime.model_sync_hours} onChange={event => setRuntime("model_sync_hours", Number(event.target.value))} /></Field>

@@ -107,8 +107,10 @@ export function badgeReading(overview: Overview | null, metric: BadgeMetric, cur
         value = metric === "balance" ? group.balance : group.today;
         unit = group.currency;
         label = `${metric === "balance" ? "余额" : "今日"} ${unit || "未设单位"}`;
-        warning = !group.currency || group.attention || (metric === "balance" ? group.balanceCount : group.todayCount) < group.accounts || (group.oldestCheck != null && beijingDate(group.oldestCheck) !== beijingDate(now));
-        detail = `已采集 ${metric === "balance" ? group.balanceCount : group.todayCount}/${group.accounts} 个账户${group.oldestCheck != null ? `；最早采集 ${new Date(group.oldestCheck).toLocaleString("zh-CN")}` : ""}`;
+        const collected = metric === "balance" ? group.oldestCheck : group.oldestTodayCheck;
+        const unknownTime = metric === "balance" ? group.checkedCount < group.accounts : group.todayCheckedCount < group.todayCount;
+        warning = !group.currency || group.attention || unknownTime || (metric === "balance" ? group.balanceCount : group.todayCount) < group.accounts || (collected != null && beijingDate(collected) !== beijingDate(now));
+        detail = `已采集 ${metric === "balance" ? group.balanceCount : group.todayCount}/${group.accounts} 个账户；${metric === "today" ? "消费成功采集" : "上游检查"}${unknownTime || collected == null ? "时间未知" : `最早 ${new Date(collected).toLocaleString("zh-CN")}`}`;
       } else { warning = true; detail = groups.length > 1 ? "请在浮标设置中选择币种" : "暂无账户数据"; }
     }
   }

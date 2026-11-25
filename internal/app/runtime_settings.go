@@ -6,6 +6,8 @@ import (
 )
 
 type RuntimeOptions struct {
+	RequestDigestDays       int      `json:"request_digest_days" gorm:"not null;default:7"`
+	RequestDigestLimit      int      `json:"request_digest_limit" gorm:"not null;default:5000"`
 	FirstOutputSeconds      int      `json:"first_output_seconds" gorm:"not null;default:60"`
 	StreamIdleSeconds       int      `json:"stream_idle_seconds" gorm:"not null;default:120"`
 	RequestTimeoutSeconds   int      `json:"request_timeout_seconds" gorm:"not null;default:600"`
@@ -23,6 +25,10 @@ type RuntimeOptions struct {
 }
 
 func (options RuntimeOptions) validate() error {
+	if options.RequestDigestDays < 0 || options.RequestDigestDays > 90 || options.RequestDigestLimit < 0 || options.RequestDigestLimit > 100000 {
+		return errors.New("摘要保留须为 1–90 天、1–100000 条；0 使用默认 7 天、5000 条")
+	}
+
 	if options.FirstOutputSeconds < 1 || options.FirstOutputSeconds > 3600 || options.StreamIdleSeconds < 1 || options.StreamIdleSeconds > 3600 || options.RequestTimeoutSeconds < 1 || options.RequestTimeoutSeconds > 10800 || options.MaxAttempts < 1 || options.MaxAttempts > 32 || options.MonitorConcurrency < 1 || options.MonitorConcurrency > 8 {
 		return errors.New("首输出和流空闲超时须为 1–3600 秒，总超时为 1–10800 秒，最多尝试 1–32 次，采集并发 1–8")
 	}

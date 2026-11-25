@@ -39,14 +39,14 @@
     </td>
     <td width="50%" valign="top">
       <h3>04 · 请求与费用</h3>
-      <p>查看进行中请求、近期响应与上游尝试，复制请求 ID、导出脱敏详情，统计 Token、缓存命中和费用估算。平滑曲线面积图支持切换请求量、输入输出 Token 和费用；用量趋势与渠道、模型表现持久化保存。</p>
+      <p>查看进行中请求、近期响应与上游尝试，保存跨重启的脱敏请求摘要，统计 Token、缓存命中和费用估算。支持 Key 周期预算、并发与请求频率限制，以及同模型渠道表现比较。</p>
     </td>
   </tr>
 </table>
 
 通知支持 Webhook、Telegram、Email、企业微信、钉钉、飞书和 Server酱。提供全局出站代理、凭据加密、网页备份恢复与选择性配置迁移。
 
-可使用 [Windows 桌面小部件](docs/usage.md#windows-桌面小部件)查看余额、今日实际消费、Token 和请求数，支持完整总览、按内容适配高度，以及贴边收起为可切换指标的数据浮标。
+可使用 [Windows 桌面小部件](docs/usage.md#windows-桌面小部件)查看余额、今日实际消费、Token 和请求数，支持完整总览、分区折叠、阅读设置与贴边数据浮标，提供登录自启动和手动更新检查。
 
 ## 快速开始
 
@@ -57,7 +57,7 @@
 ```yaml
 services:
   ledgergate:
-    image: ghcr.io/sectsnow/ledgergate:0.1.14
+    image: ghcr.io/sectsnow/ledgergate:0.1.15
     restart: unless-stopped
     ports:
       - "8081:8080"
@@ -156,6 +156,7 @@ curl http://127.0.0.1:8081/v1/chat/completions \
 | --- | --- |
 | [使用指南](docs/usage.md) | 首次配置、余额与告警、渠道管理、协议边界、模型测试和用量统计。 |
 | [Docker 部署](docs/docker.md) | 镜像拉取、NAS 挂载、端口设置、更新与数据迁移。 |
+| [网关预算与排障](docs/gateway-controls.md) | 周期预算、并发与频率限制、请求摘要、渠道比较和分项采集状态。 |
 | [部署与数据维护](docs/deployment.md) | 运行参数、管理员密码、systemd、网页备份恢复和配置导入导出。 |
 | [版本说明](https://github.com/sectsnow/LedgerGate/releases) | 正式版本变化与升级注意事项。 |
 

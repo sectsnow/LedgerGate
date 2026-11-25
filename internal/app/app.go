@@ -53,6 +53,8 @@ type App struct {
 	backupMu       sync.Mutex
 	priceSyncMu    sync.Mutex
 	modelSyncMu    sync.Mutex
+	keyTrafficMu   sync.Mutex
+	keyTraffic     map[uint]*keyTraffic
 	notificationMu sync.Mutex
 	mu             sync.Mutex
 	// shortcut: 轮询和冷却状态保存在当前进程，部署多实例时改用共享状态。
@@ -139,7 +141,7 @@ func open(config Config) (*App, error) {
 		return nil, err
 	}
 	keyUsageExisted := db.Migrator().HasColumn(&APIKey{}, "used_micros")
-	if err = db.AutoMigrate(&Account{}, &accountIconRecord{}, &Channel{}, &Group{}, &Route{}, &APIKey{}, &Snapshot{}, &RequestLog{}, &RequestDetail{}, &RequestDay{}, &RequestHour{}, &Alert{}, &AlertState{}, &Session{}, &Setting{}, &widgetCredential{}, &channelCreation{}, &SyncTask{}, &NotificationChannel{}, &NotificationDelivery{}); err != nil {
+	if err = db.AutoMigrate(&Account{}, &accountIconRecord{}, &Channel{}, &Group{}, &Route{}, &APIKey{}, &KeyUsageDay{}, &RequestSummary{}, &CollectionEvent{}, &Snapshot{}, &RequestLog{}, &RequestDetail{}, &RequestDay{}, &RequestHour{}, &Alert{}, &AlertState{}, &Session{}, &Setting{}, &widgetCredential{}, &channelCreation{}, &SyncTask{}, &NotificationChannel{}, &NotificationDelivery{}); err != nil {
 		return nil, err
 	}
 	if !keyUsageExisted {
@@ -169,6 +171,11 @@ func open(config Config) (*App, error) {
 	if err := app.migrateRequestHistory(); err != nil {
 		return nil, err
 	}
+	var lastSummaryID uint
+	if err := db.Model(&RequestSummary{}).Select("COALESCE(MAX(id),0)").Scan(&lastSummaryID).Error; err != nil {
+		return nil, err
+	}
+	app.nextRequestID = max(app.nextRequestID, lastSummaryID)
 	opened = true
 	return app, nil
 }
@@ -358,6 +365,12 @@ func (a *App) gatewayAuth(c *gin.Context) {
 	c.Set("allowed_models", key.AllowedModels)
 	c.Set("key_id", key.ID)
 	c.Set("key_name", key.Name)
+	if c.Request.Method == http.MethodPost {
+		if !a.admitKeyRequest(c, key) {
+			return
+		}
+		defer a.releaseKeyRequest(key.ID)
+	}
 	c.Next()
 }
 

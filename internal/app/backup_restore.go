@@ -223,6 +223,9 @@ func (a *App) useRestoredData(restored *App) {
 	a.activeRequests, a.accountIcons = nil, nil
 	a.finishedRequests, a.finishedRequestBytes = nil, 0
 	a.nextRequestID = restored.nextRequestID
+	a.keyTrafficMu.Lock()
+	a.keyTraffic = nil
+	a.keyTrafficMu.Unlock()
 }
 
 func recoverPendingRestore(dataDir string) error {

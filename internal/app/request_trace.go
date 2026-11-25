@@ -219,14 +219,26 @@ func (a *App) finishRequestTrace(t *requestTrace, log *RequestLog) error {
 	t.log = *log
 	t.mu.Unlock()
 	payload := t.payload()
+	options := a.runtimeOptions()
 	err := a.DB.Transaction(func(tx *gorm.DB) error {
 		if err := recordRequestUsage(tx, log); err != nil {
 			return err
 		}
-		return debitKey(tx, log)
+		if err := debitKey(tx, log); err != nil {
+			return err
+		}
+		if err := recordKeyUsage(tx, log); err != nil {
+			return err
+		}
+		if err := recordRoutingQuality(tx, log, payload); err != nil {
+			return err
+		}
+		return nil
 	})
 	if err != nil {
 		slog.Error("请求统计保存失败", "request_id", log.RequestID, "error", err)
+	} else if summaryErr := a.DB.Transaction(func(tx *gorm.DB) error { return saveRequestSummary(tx, *log, payload, options) }); summaryErr != nil {
+		slog.Error("请求摘要保存失败，用量与预算已保存", "request_id", log.RequestID, "error", summaryErr)
 	}
 	a.mu.Lock()
 	delete(a.activeRequests, log.ID)

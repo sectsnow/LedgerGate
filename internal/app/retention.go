@@ -49,6 +49,15 @@ func (a *App) cleanupHistory(ctx context.Context, now time.Time) error {
 		if err := validateRetention(setting); err != nil {
 			return err
 		}
+		if err := trimRequestSummaries(tx, now, setting.RuntimeOptions); err != nil {
+			return err
+		}
+		if err := tx.Where("date < ?", usageDay(now).AddDate(0, 0, -399).Format("2006-01-02")).Delete(&KeyUsageDay{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("created_at < ?", now.AddDate(0, 0, -30)).Delete(&CollectionEvent{}).Error; err != nil {
+			return err
+		}
 		today := usageDay(now)
 		summaryStart := today.AddDate(0, 0, 1-setting.RequestSummaryRetentionDays)
 		if err := tx.Where("hour < ?", summaryStart.Unix()).Delete(&RequestHour{}).Error; err != nil {

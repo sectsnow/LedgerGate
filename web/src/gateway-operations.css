@@ -1,0 +1,10 @@
+.account-collection { margin: 12px 0; padding: 10px 0; border-top: 1px solid var(--border); font-size: 12px; }
+.account-collection summary { cursor: pointer; color: var(--accent); }
+.account-collection dl { margin: 12px 0; }
+.account-collection dl > div { margin: 8px 0; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.account-collection dd { margin: 4px 0; color: var(--text-muted); overflow-wrap: anywhere; }
+.account-collection ol { padding-left: 18px; max-height: 250px; overflow: auto; }
+.account-collection li { margin: 10px 0; line-height: 1.6; }
+.account-collection li p { margin: 2px 0; }
+.quality-panel select { max-width: 280px; }
+@media (max-width: 600px) { .quality-panel select {max-width: 180px;} }

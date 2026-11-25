@@ -20,6 +20,7 @@ function CostDetails({ row, pending }: { row: RequestLog; pending: boolean }) {
   const usageKnown = !row.metrics_version || row.usage_recorded && !row.usage_warning;
   const unavailable = pending ? "等待核算" : "无法估算";
   const missingUsage = pending ? "等待用量" : "用量缺失";
+  if (row.summary_only) return <div className="request-log-footer"><span>{row.cost_status === "unknown" ? "费用未知，未计入估算。" : `当时费用估算 ${money(row.cost_micros)}；摘要不保留逐项计价或正文。`}</span>{row.finished_at && <time dateTime={row.finished_at}>结束于 {date(row.finished_at)}</time>}</div>;
   if (!detail) return <div className="request-log-footer"><span>{pending ? "请求进行中，费用尚未确定。" : row.metrics_version ? "缺少有效用量或计价信息，无法估算费用；结束后不会自动补算，以上游账单为准。" : "旧记录未保存计价明细，保留当时的费用估算。"}</span>{row.finished_at && <time dateTime={row.finished_at}>结束于 {date(row.finished_at)}</time>}</div>;
   const read = Math.min(Math.max(row.cache_read_tokens, 0), Math.max(row.input_tokens, 0));
   const write = Math.min(Math.max(row.cache_write_tokens, 0), Math.max(row.input_tokens - read, 0));

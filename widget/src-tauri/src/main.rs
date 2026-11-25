@@ -53,6 +53,36 @@ fn open_dashboard(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|_| "无法打开 LedgerGate 控制台".into())
 }
 
+#[tauri::command]
+fn widget_version(app: tauri::AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+#[tauri::command]
+fn get_autostart() -> Result<bool, String> {
+    ledgergate_widget::startup::enabled()
+}
+#[tauri::command]
+fn set_autostart(enabled: bool) -> Result<bool, String> {
+    ledgergate_widget::startup::set(enabled)
+}
+#[tauri::command]
+async fn check_widget_update(
+    app: tauri::AppHandle,
+) -> Result<ledgergate_widget::updates::Update, String> {
+    ledgergate_widget::updates::check(&app.package_info().version.to_string()).await
+}
+#[tauri::command]
+fn open_widget_release(
+    app: tauri::AppHandle,
+    version: String,
+    asset: Option<String>,
+) -> Result<(), String> {
+    let url = ledgergate_widget::updates::release_url(&version, asset.as_deref())?;
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|_| "无法打开浏览器".to_owned())
+}
+
 fn main() {
     tauri::Builder::default()
         .manage(desktop_display::DisplayState::default())
@@ -62,6 +92,11 @@ fn main() {
             configure,
             get_overview,
             open_dashboard,
+            widget_version,
+            get_autostart,
+            set_autostart,
+            check_widget_update,
+            open_widget_release,
             desktop_display::set_widget_display,
             desktop_display::hide_widget,
             desktop_display::widget_pointer_down,

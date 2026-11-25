@@ -38,9 +38,10 @@ func TestWidgetCredentialAndOverview(t *testing.T) {
 		t.Fatal("credential was not stored as a digest", err)
 	}
 	today := usageDay(time.Now()).Format("2006-01-02")
+	collectedAt := time.Now().Add(-5 * time.Minute).Truncate(time.Second)
 	accounts := []Account{
-		{Name: "private name", Currency: "USD", Balance: floatPointer(12), TodayUsed: floatPointer(2), TodayDate: today, Enabled: true, Status: "ok", Token: "private-token", Warnings: "private-warning: 今日消费采集失败"},
-		{Currency: "CNY", Balance: floatPointer(0), TodayUsed: floatPointer(99), TodayDate: "2000-01-01", Status: "error"},
+		{Name: "显示账户", Currency: "USD", Balance: floatPointer(12), TodayUsed: floatPointer(2), TodayDate: today, TodayCollectedAt: &collectedAt, IntervalSeconds: 300, Enabled: true, Status: "ok", Token: "private-token", Warnings: "private-warning: 今日消费采集失败", LastError: "private-error", BaseURL: "https://private.example"},
+		{Currency: "CNY", Balance: floatPointer(0), TodayUsed: floatPointer(99), TodayDate: "2000-01-01", TodayCollectedAt: &collectedAt, Status: "error"},
 	}
 	if err := a.DB.Create(&accounts).Error; err != nil {
 		t.Fatal(err)
@@ -68,6 +69,10 @@ func TestWidgetCredentialAndOverview(t *testing.T) {
 	}
 	if strings.Contains(w.Body.String(), "private") || w.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal("widget exposed fields beyond its scope", w.Body.String())
+	}
+	first := overview.Accounts[0]
+	if first.ID != accounts[0].ID || first.Name != "显示账户" || first.TodayCollectedAt == nil || !first.TodayCollectedAt.Equal(collectedAt) || first.IntervalSeconds != 300 || len(first.CollectionNotes) != 1 || first.CollectionNotes[0] != "今日消费采集提醒" || overview.Accounts[1].TodayCollectedAt != nil {
+		t.Fatal("collection details lost their identity, precise timestamp or safe classification", w.Body.String())
 	}
 	if w := call(h, "GET", "/api/accounts", "", token); w.Code != 401 {
 		t.Fatal("widget token granted administrator access", w.Code)

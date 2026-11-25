@@ -44,15 +44,20 @@ func (a *App) revokeWidgetCredential(c *gin.Context) {
 }
 
 type widgetAccount struct {
-	Currency   string     `json:"currency"`
-	Balance    *float64   `json:"balance"`
-	TodayUsed  *float64   `json:"today_used"`
-	TodayDate  string     `json:"today_date"`
-	Status     string     `json:"status"`
-	Enabled    bool       `json:"enabled"`
-	CheckedAt  *time.Time `json:"checked_at"`
-	Warnings   string     `json:"-"`
-	HasWarning bool       `json:"has_warning" gorm:"-"`
+	ID               uint       `json:"id"`
+	Name             string     `json:"name"`
+	Currency         string     `json:"currency"`
+	Balance          *float64   `json:"balance"`
+	TodayUsed        *float64   `json:"today_used"`
+	TodayDate        string     `json:"today_date"`
+	Status           string     `json:"status"`
+	Enabled          bool       `json:"enabled"`
+	CheckedAt        *time.Time `json:"checked_at"`
+	TodayCollectedAt *time.Time `json:"today_collected_at"`
+	IntervalSeconds  int        `json:"interval_seconds"`
+	CollectionNotes  []string   `json:"collection_notes" gorm:"-"`
+	Warnings         string     `json:"-"`
+	HasWarning       bool       `json:"has_warning" gorm:"-"`
 }
 
 type widgetRank struct {
@@ -73,19 +78,19 @@ type widgetTrend struct {
 }
 
 type widgetPeriod struct {
-	Days                int          `json:"days"`
-	RetentionDays       int          `json:"retention_days"`
-	Requests            int64        `json:"requests"`
-	Errors              int64        `json:"errors"`
-	InputTokens         int64        `json:"input_tokens"`
-	OutputTokens        int64        `json:"output_tokens"`
-	CacheReadTokens     int64        `json:"cache_read_tokens"`
-	CacheWriteTokens    int64        `json:"cache_write_tokens"`
-	CostMicros          int64        `json:"cost_micros"`
-	CostUnknownRequests int64        `json:"cost_unknown_requests"`
+	Days                int           `json:"days"`
+	RetentionDays       int           `json:"retention_days"`
+	Requests            int64         `json:"requests"`
+	Errors              int64         `json:"errors"`
+	InputTokens         int64         `json:"input_tokens"`
+	OutputTokens        int64         `json:"output_tokens"`
+	CacheReadTokens     int64         `json:"cache_read_tokens"`
+	CacheWriteTokens    int64         `json:"cache_write_tokens"`
+	CostMicros          int64         `json:"cost_micros"`
+	CostUnknownRequests int64         `json:"cost_unknown_requests"`
 	Trend               []widgetTrend `json:"trend" gorm:"-"`
-	Models              []widgetRank `json:"models" gorm:"-"`
-	Channels            []widgetRank `json:"channels" gorm:"-"`
+	Models              []widgetRank  `json:"models" gorm:"-"`
+	Channels            []widgetRank  `json:"channels" gorm:"-"`
 }
 
 func (a *App) widgetOverview(c *gin.Context) {
@@ -122,7 +127,7 @@ func (a *App) widgetOverview(c *gin.Context) {
 	day := RequestDay{Date: today}
 	var period widgetPeriod
 	err = a.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&Account{}).Select("currency", "balance", "today_used", "today_date", "status", "enabled", "checked_at", "warnings").Order("id").Scan(&accounts).Error; err != nil {
+		if err := tx.Model(&Account{}).Select("id", "name", "currency", "balance", "today_used", "today_date", "today_collected_at", "interval_seconds", "status", "enabled", "checked_at", "warnings").Order("id").Scan(&accounts).Error; err != nil {
 			return err
 		}
 		if err := tx.First(&day, "date = ?", today).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -178,8 +183,16 @@ func (a *App) widgetOverview(c *gin.Context) {
 	}
 	for i := range accounts {
 		accounts[i].HasWarning = strings.TrimSpace(accounts[i].Warnings) != ""
+		// 只返回固定分类，不把可能包含上游响应或凭据的原始错误下发小部件。
+		accounts[i].CollectionNotes = []string{}
+		for _, field := range []string{"今日消费", "累计消费", "倍率", "订阅", "公告"} {
+			if strings.Contains(accounts[i].Warnings, field) {
+				accounts[i].CollectionNotes = append(accounts[i].CollectionNotes, field+"采集提醒")
+			}
+		}
 		if accounts[i].TodayDate != today {
 			accounts[i].TodayUsed = nil
+			accounts[i].TodayCollectedAt = nil
 		}
 	}
 	c.JSON(200, object{"date": today, "accounts": accounts, "requests": day.Requests, "input_tokens": day.InputTokens, "output_tokens": day.OutputTokens, "period": period})

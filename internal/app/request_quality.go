@@ -7,17 +7,23 @@ import (
 )
 
 type qualityRow struct {
-	ID                  string   `json:"id"`
-	Name                string   `json:"name"`
-	Requests            int64    `json:"requests"`
-	Successes           int64    `json:"successes"`
-	InputTokens         int64    `json:"input_tokens"`
-	OutputTokens        int64    `json:"output_tokens"`
-	CostMicros          int64    `json:"cost_micros"`
-	UnknownCosts        int64    `json:"unknown_costs"`
-	AverageDurationMS   *float64 `json:"average_duration_ms"`
-	AverageFirstTokenMS *float64 `json:"average_first_token_ms"`
-	OutputPerSecond     *float64 `json:"output_per_second"`
+	ID                    string   `json:"id"`
+	Name                  string   `json:"name"`
+	Requests              int64    `json:"requests"`
+	Successes             int64    `json:"successes"`
+	InputTokens           int64    `json:"input_tokens"`
+	OutputTokens          int64    `json:"output_tokens"`
+	CostMicros            int64    `json:"cost_micros"`
+	UnknownCosts          int64    `json:"unknown_costs"`
+	AverageDurationMS     *float64 `json:"average_duration_ms"`
+	AverageFirstTokenMS   *float64 `json:"average_first_token_ms"`
+	OutputPerSecond       *float64 `json:"output_per_second"`
+	ObservedRequests      int64    `json:"observed_requests"`
+	FirstAttemptSuccesses int64    `json:"first_attempt_successes"`
+	RetriedSuccesses      int64    `json:"retried_successes"`
+	FailedRequests        int64    `json:"failed_requests"`
+	AttemptOverheadMS     int64    `json:"attempt_overhead_ms"`
+	LastRequestUnix       int64    `json:"last_request_unix"`
 }
 
 func (a *App) requestQuality(c *gin.Context) {
@@ -59,11 +65,25 @@ func (a *App) requestQuality(c *gin.Context) {
 			COALESCE(SUM(cost_micros),0) AS cost_micros, SUM(cost_unknown_requests) AS unknown_costs,
 			1.0*SUM(duration_ms)/NULLIF(SUM(requests),0) AS average_duration_ms,
 			1.0*SUM(semantic_first_token_ms)/NULLIF(SUM(semantic_first_token_count),0) AS average_first_token_ms,
-			1000.0*NULLIF(SUM(output_tokens),0)/NULLIF(SUM(duration_ms),0) AS output_per_second`).
+			1000.0*NULLIF(SUM(output_tokens),0)/NULLIF(SUM(duration_ms),0) AS output_per_second,
+            SUM(observed_requests) AS observed_requests, SUM(first_attempt_successes) AS first_attempt_successes, SUM(retried_successes) AS retried_successes, SUM(failed_requests) AS failed_requests, SUM(attempt_overhead_ms) AS attempt_overhead_ms, MAX(last_request_unix) AS last_request_unix`).
 		Group(group).Order("requests DESC").Limit(500)
+	model := c.Query("model")
+	if len(model) > 200 {
+		fail(c, 400, "模型筛选过长")
+		return
+	}
+	if model != "" {
+		query = query.Where("model = ?", model)
+	}
+	models := []string{}
+	if err := a.DB.Model(&RequestHour{}).Where("hour >= ? AND hour < ?", start.Unix()/3600*3600, end.Unix()).Distinct("model").Order("model").Limit(500).Pluck("model", &models).Error; err != nil {
+		fail(c, 500, "读取模型筛选失败")
+		return
+	}
 	if err := query.Scan(&rows).Error; err != nil {
 		fail(c, 500, "读取渠道与模型统计失败")
 		return
 	}
-	c.JSON(200, object{"items": rows, "start": start, "end": end})
+	c.JSON(200, object{"items": rows, "start": start, "end": end, "models": models})
 }

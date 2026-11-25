@@ -203,6 +203,11 @@ func (a *App) loginAccount(ctx context.Context, account *Account) error {
 }
 
 func (a *App) fetchAccount(ctx context.Context, account *Account) (*rateSnapshot, error) {
+	parts := collectionState(*account)
+	for _, kind := range []string{"balance", "used", "today", "rates", "subscriptions", "announcements"} {
+		updateCollection(parts, kind, "skipped", "等待账户余额接口成功后继续采集")
+	}
+	defer func() { account.CollectionState = jsonString(parts) }()
 	now := time.Now()
 	day := usageDay(now)
 	date := day.Format("2006-01-02")
@@ -216,6 +221,7 @@ func (a *App) fetchAccount(ctx context.Context, account *Account) (*rateSnapshot
 	}
 	value, _, err := a.accountRequest(ctx, account, http.MethodGet, path, nil)
 	if err != nil {
+		updateCollection(parts, "balance", "failed", "账户接口访问失败，沿用上次余额")
 		return nil, err
 	}
 	data := obj(value)
@@ -225,25 +231,34 @@ func (a *App) fetchAccount(ctx context.Context, account *Account) (*rateSnapshot
 	}
 	balance, ok := number(data[balanceField])
 	if !ok {
+		updateCollection(parts, "balance", "failed", "接口缺少余额数值")
 		return nil, fmt.Errorf("账户响应缺少数值字段 %s", balanceField)
 	}
 	if account.Kind == "newapi" {
 		balance /= account.QuotaPerUnit
 	}
 	account.Balance = &balance
+	updateCollection(parts, "balance", "ok", "余额采集成功")
 	if used, ok := number(data[usedField]); ok {
 		if account.Kind == "newapi" {
 			used /= account.QuotaPerUnit
 		}
 		account.Used = &used
+		updateCollection(parts, "used", "ok", "累计消费采集成功")
+	}
+	if parts["used"].Status != "ok" {
+		updateCollection(parts, "used", "unknown", "接口未返回累计消费")
 	}
 	warnings := []string{}
 	if account.Kind == "sub2api" {
+		updateCollection(parts, "used", "failed", "累计消费接口访问失败或未返回数值")
+		updateCollection(parts, "today", "failed", "今日消费接口访问失败或未返回数值")
 		stats, _, err := a.accountRequest(ctx, account, http.MethodGet, "/api/v1/usage/dashboard/stats", nil)
 		if err != nil {
 			warnings = append(warnings, "累计消费采集失败，显示上次可用数据（"+err.Error()+"）")
 		} else if used, ok := number(obj(stats)["total_actual_cost"]); ok {
 			account.Used = &used
+			updateCollection(parts, "used", "ok", "累计实际消费采集成功")
 		} else {
 			warnings = append(warnings, "上游未返回累计实际消费，显示上次可用数据")
 		}
@@ -253,10 +268,13 @@ func (a *App) fetchAccount(ctx context.Context, account *Account) (*rateSnapshot
 			account.TodayUsed = &today
 			collectedAt := time.Now()
 			account.TodayCollectedAt = &collectedAt
+			updateCollection(parts, "today", "ok", "今日实际消费采集成功")
 		} else {
 			warnings = append(warnings, "上游未返回今日实际消费，显示当日上次可用数据")
 		}
 	} else {
+		updateCollection(parts, "today", "failed", "今日消费接口访问失败或未返回数值")
+		updateCollection(parts, "subscriptions", "unsupported", "此类型账户未接入订阅采集")
 		path := fmt.Sprintf("/api/log/self/stat?type=0&token_name=&model_name=&start_timestamp=%d&end_timestamp=%d&group=", day.Unix(), now.Unix())
 		stats, _, err := a.accountRequest(ctx, account, http.MethodGet, path, nil)
 		if err != nil {
@@ -266,28 +284,35 @@ func (a *App) fetchAccount(ctx context.Context, account *Account) (*rateSnapshot
 			account.TodayUsed = &today
 			collectedAt := time.Now()
 			account.TodayCollectedAt = &collectedAt
+			updateCollection(parts, "today", "ok", "今日实际消费采集成功")
 		} else {
 			warnings = append(warnings, "上游未返回今日消费，显示当日上次可用数据")
 		}
 	}
 	var collectedRates *rateSnapshot
 	if rates, err := a.fetchAccountRates(ctx, account); err != nil {
+		updateCollection(parts, "rates", "failed", "倍率接口访问失败，沿用上次数据")
 		warnings = append(warnings, "倍率采集失败，显示上次可用数据（"+err.Error()+"）")
 	} else {
 		account.Rates = jsonString(rates)
+		updateCollection(parts, "rates", "ok", "倍率采集成功")
 		collectedRates = &rates
 	}
 	if announcements, err := a.fetchAccountAnnouncements(ctx, account); err != nil {
+		updateCollection(parts, "announcements", "failed", "公告接口访问失败，沿用上次数据")
 		warnings = append(warnings, "公告采集失败，显示上次可用数据（"+err.Error()+"）")
 	} else {
 		account.Announcements = announcements
+		updateCollection(parts, "announcements", "ok", "公告采集成功")
 	}
 	if account.Kind == "sub2api" {
 		value, _, err := a.accountRequest(ctx, account, http.MethodGet, "/api/v1/subscriptions/progress", nil)
 		if err != nil {
+			updateCollection(parts, "subscriptions", "failed", "订阅接口访问失败，沿用上次数据")
 			warnings = append(warnings, "订阅采集失败，显示上次可用数据（"+err.Error()+"）")
 		} else {
 			account.Subscriptions = jsonString(value)
+			updateCollection(parts, "subscriptions", "ok", "订阅采集成功")
 		}
 	}
 	account.Warnings = strings.Join(warnings, "；")
@@ -370,6 +395,12 @@ func (a *App) collectAccount(parent context.Context, id uint, scheduled bool) (*
 	err = a.DB.Transaction(func(tx *gorm.DB) error {
 		updates := map[string]any{"balance": account.Balance, "used": account.Used, "today_used": account.TodayUsed, "today_date": account.TodayDate, "status": account.Status, "last_error": account.LastError, "rates": account.Rates, "subscriptions": account.Subscriptions, "announcements": account.Announcements, "warnings": account.Warnings, "checked_at": account.CheckedAt, "next_check_at": account.NextCheckAt, "token": account.Token, "refresh_token": account.RefreshToken, "cookie": account.Cookie, "user_id": account.UserID}
 		updates["today_collected_at"] = account.TodayCollectedAt
+		updates["collection_state"] = account.CollectionState
+		if collectedRates != nil && previous.Rates != account.Rates {
+			if err := appendCollectionEvent(tx, account.ID, "rates", "ok", "已采集新的倍率或分组快照，检查关联报价"); err != nil {
+				return err
+			}
+		}
 		result := tx.Model(&Account{}).Where("id = ? AND revision = ?", account.ID, account.Revision).Updates(updates)
 		if result.Error != nil {
 			return result.Error

@@ -48,6 +48,16 @@ jobs:
           $installer = @(Get-ChildItem "src-tauri/target/release/bundle/nsis/*-setup.exe" -ErrorAction SilentlyContinue)
           if ($installer.Count -ne 1) { throw "缺少安装包或找到多个安装包" }
           Copy-Item $installer[0].FullName "src-tauri/target/release/LedgerGateWidget-Setup-x64.exe"
+      - name: 验证安装升级时的启动项保留
+        shell: pwsh
+        run: |
+          $compiler = Get-ChildItem "$env:LOCALAPPDATA/tauri" -Filter makensis.exe -Recurse | Select-Object -First 1
+          if (-not $compiler) { throw "未找到构建安装包使用的 NSIS 编译器" }
+          $testExe = Join-Path $env:RUNNER_TEMP "ledgergate-installer-hook-check.exe"
+          & $compiler.FullName "/DHOOK_TEST_OUTPUT=$testExe" "tests/installer-hooks.nsi"
+          if ($LASTEXITCODE -ne 0) { throw "安装钩子回归程序编译失败" }
+          $result = Start-Process $testExe -Wait -PassThru
+          if ($result.ExitCode -ne 0) { throw "安装升级启动项回归失败：$($result.ExitCode)" }
       - name: 上传 Windows 构建产物
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

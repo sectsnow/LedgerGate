@@ -11,7 +11,7 @@ const active = (row: RequestLog) => row.state === "running" || row.state === "st
 const seconds = (ms: number) => `${(ms / 1000).toFixed(2)}s`;
 const count = (value: number | undefined) => (value || 0).toLocaleString("zh-CN");
 
-function Detail({ id, dialog: Dialog, close }: { id: number; dialog: DialogComponent; close: () => void }) {
+function Detail({ id, summaryOnly = false, dialog: Dialog, close }: { id: number; summaryOnly?: boolean; dialog: DialogComponent; close: () => void }) {
   const [value, setValue] = useState<RequestDetail | null>(null);
   const [error, setError] = useState("");
   const [expired, setExpired] = useState(false);
@@ -23,7 +23,7 @@ function Detail({ id, dialog: Dialog, close }: { id: number; dialog: DialogCompo
       if (pending || terminal) return;
       pending = true;
       try {
-        const next = await api<RequestDetail>(`/requests/${id}`);
+        const next = await api<RequestDetail>(`/${summaryOnly ? "request-summaries" : "requests"}/${id}`);
         if (!stopped) { setValue(next); setError(""); terminal = !active(next.request); }
       } catch (error) {
         if (!stopped) {
@@ -37,13 +37,13 @@ function Detail({ id, dialog: Dialog, close }: { id: number; dialog: DialogCompo
     void load();
     const timer = setInterval(() => { if (!document.hidden) void load(); }, 2000);
     return () => { stopped = true; clearInterval(timer); };
-  }, [id]);
+  }, [id, summaryOnly]);
   const row = value?.request;
   const payload = value?.detail;
   function download() {
     if (!value) return;
     try {
-      const body = JSON.stringify({ exported_at: new Date().toISOString(), source_unavailable: expired, note: "本文件为当前已获取的脱敏预览，请求和响应各最多 256 KiB；截断状态见 request_truncated、response_truncated，进行中的请求为导出时的快照。", request: value.request, detail: value.detail }, null, 2);
+      const body = JSON.stringify({ exported_at: new Date().toISOString(), source_unavailable: expired, note: "本文件为已获取的脱敏数据；summary_only=true 表示持久化摘要，不含正文。内存详情的请求与响应各最多 256 KiB，进行中请求为导出时快照。", request: value.request, detail: value.detail }, null, 2);
       const url = URL.createObjectURL(new Blob([body], { type: "application/json;charset=utf-8" }));
       const link = document.createElement("a");
       link.href = url; link.download = `ledgergate-${value.request.request_id.replace(/[^a-zA-Z0-9_-]/g, "_") || value.request.id}.json`;
@@ -51,7 +51,7 @@ function Detail({ id, dialog: Dialog, close }: { id: number; dialog: DialogCompo
       try { link.click(); } finally { link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
     } catch (error) { setError((error as Error).message); }
   }
-  return <Dialog title="请求详情" close={close}>
+  return <Dialog title={summaryOnly ? "历史请求摘要" : "请求详情"} close={close}>
     <div className="request-detail">
       {error && <p className="form-error" role="alert">{error}</p>}
       {expired && <p className="field-hint" role="status">请求已移出内存缓存或服务已重启，已停止自动刷新。{row && "以下保留最后读取的快照，无法确认此后的请求结果。"}</p>}
@@ -69,7 +69,7 @@ function Detail({ id, dialog: Dialog, close }: { id: number; dialog: DialogCompo
           {attempt.reason && <p className="field-hint">{attempt.reason}</p>}
           {attempt.finish_reason && <p className="field-hint">上游结束原因：{requestEndLabel(attempt.finish_reason, attempt.incomplete_reason)}</p>}
         </li>)}</ol></section> : null}
-        {!payload?.available ? <p className="field-hint">本次请求未记录正文。</p> : <>
+        {!payload?.available ? <p className="field-hint">{summaryOnly ? "此处仅保留请求摘要与固定诊断分类，不保存正文或上游错误原文。" : "本次请求未记录正文。"}</p> : <>
           {active(row) && !expired && <p className="field-hint" role="status">请求正在进行，每 2 秒更新。Token 和费用以实际返回的用量为准。</p>}
           <div className="request-body-columns">
             <JsonBody title="请求内容" text={payload.request_body} truncated={payload.request_truncated} placeholder="请求体尚未读取或未通过校验。" />
@@ -82,7 +82,7 @@ function Detail({ id, dialog: Dialog, close }: { id: number; dialog: DialogCompo
   </Dialog>;
 }
 
-export function RequestList({ rows, channels, small, dialog }: { rows: RequestLog[]; channels: ChannelRow[]; small?: boolean; dialog: DialogComponent }) {
+export function RequestList({ rows, channels, small, dialog, summaryOnly = false }: { rows: RequestLog[]; summaryOnly?: boolean; channels: ChannelRow[]; small?: boolean; dialog: DialogComponent }) {
   const [selected, setSelected] = useState<number | null>(null);
   return <>
     {!rows.length ? <div className="empty"><div className="empty-symbol"><FileSearch size={25} aria-hidden="true" /></div><p>暂无请求记录</p></div> : <div className="request-records">{rows.map(row => <div key={row.id} className="request-record" onClick={event => {
@@ -92,11 +92,12 @@ export function RequestList({ rows, channels, small, dialog }: { rows: RequestLo
         <button className="secondary" type="button" aria-label={`查看请求 ${row.request_id}`} onClick={() => setSelected(row.id)}>查看详情</button>
       </RequestMetrics>
     </div>)}</div>}
-    {selected !== null && <Detail key={selected} id={selected} dialog={dialog} close={() => setSelected(null)} />}
+    {selected !== null && <Detail key={`${summaryOnly}-${selected}`} id={selected} summaryOnly={summaryOnly} dialog={dialog} close={() => setSelected(null)} />}
   </>;
 }
 
 export default function RequestHistory({ channels, dialog }: { channels: ChannelRow[]; dialog: DialogComponent }) {
+  const [summaryOnly, setSummaryOnly] = useState(false), [page, setPage] = useState(1);
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
   const [state, setState] = useState("");
@@ -105,9 +106,10 @@ export default function RequestHistory({ channels, dialog }: { channels: Channel
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   useEffect(() => {
-    const timer = setTimeout(() => setQuery(draft.trim()), 250);
+    if (draft.trim() === query) return;
+    const timer = setTimeout(() => {setQuery(draft.trim());setPage(1);}, 250);
     return () => clearTimeout(timer);
-  }, [draft]);
+  }, [draft, query]);
   useEffect(() => {
     let stopped = false;
     let pending = false;
@@ -116,8 +118,8 @@ export default function RequestHistory({ channels, dialog }: { channels: Channel
       pending = true;
       setLoading(true);
       try {
-        const params = new URLSearchParams({ q: query, state });
-        const value = await api<RequestListResult>(`/requests?${params}`);
+        const params = new URLSearchParams({ q: query, state, ...(summaryOnly ? {page: String(page)} : {}) });
+        const value = await api<RequestListResult>(`/${summaryOnly ? "request-summaries" : "requests"}?${params}`);
         if (!stopped) { setData(value); setError(""); }
       } catch (error) { if (!stopped) setError((error as Error).message); }
       finally { pending = false; if (!stopped) setLoading(false); }
@@ -125,20 +127,22 @@ export default function RequestHistory({ channels, dialog }: { channels: Channel
     void load();
     const timer = setInterval(() => { if (!document.hidden) void load(); }, 2000);
     return () => { stopped = true; clearInterval(timer); };
-  }, [query, state, version]);
+  }, [query, state, version, summaryOnly, page]);
   return <>
+    <div className="balance-period" role="group" aria-label="请求记录来源">{[[false,"近期与正文"],[true,"历史摘要"]].map(([flag,label]) => <button key={String(flag)} aria-pressed={summaryOnly === flag} onClick={() => {setSummaryOnly(Boolean(flag));setPage(1);setState("");setData(null);}}>{label}</button>)}</div>
     <div className="list-toolbar request-toolbar">
       <div className="search"><Search size={16} /><input aria-label="搜索请求记录" placeholder="搜索模型、渠道、密钥名称或请求编号" value={draft} onChange={event => setDraft(event.target.value)} /></div>
-      <select aria-label="筛选请求状态" value={state} onChange={event => setState(event.target.value)}>
-        <option value="">全部状态</option><option value="running">进行中</option><option value="completed">已完成</option><option value="failed">失败</option><option value="cancelled">客户端断开</option>
+      <select aria-label="筛选请求状态" value={state} onChange={event => {setState(event.target.value);setPage(1);}}>
+        <option value="">全部状态</option>{!summaryOnly && <option value="running">进行中</option>}<option value="completed">已完成</option><option value="failed">失败</option><option value="cancelled">客户端断开</option>
       </select>
       <button className="secondary" type="button" disabled={loading} onClick={() => setVersion(value => value + 1)}><RefreshCw size={14} />刷新请求记录</button>
     </div>
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="panel request-history-panel">
-      <div className="panel-heading"><div><h2 className="icon-heading"><FileText size={18} aria-hidden="true" />近期请求</h2><p>已结束请求及正文最多缓存 50 条、32 MiB，进行中请求另计。重启后清空，历史用量统计继续保留。</p></div><span>共 {count(data?.total)} 条 · 进行中 {count(data?.active)} 条</span></div>
-      <RequestList rows={data?.items || []} channels={channels} dialog={dialog} />
+      <div className="panel-heading"><div><h2 className="icon-heading"><FileText size={18} aria-hidden="true" />{summaryOnly ? "历史请求摘要" : "近期请求"}</h2><p>{summaryOnly ? "摘要跨重启保留，不含正文或上游错误原文；默认 7 天、5000 条，系统设置可调整。" : "已结束请求及正文最多缓存 50 条、32 MiB，进行中请求另计。正文重启后清空，摘要和用量统计保留。"}</p></div><span>共 {count(data?.total)} 条 · 进行中 {count(data?.active)} 条</span></div>
+      <RequestList key={String(summaryOnly)} rows={data?.items || []} channels={channels} dialog={dialog} summaryOnly={summaryOnly} />
       <div className="request-pagination">
+        {summaryOnly && <><button className="secondary" disabled={page <= 1 || loading} onClick={() => setPage(current => current - 1)}>上一页</button><span>第 {page} 页 · 每页 50 条</span><button className="secondary" disabled={page * 50 >= (data?.total || 0) || loading} onClick={() => setPage(current => current + 1)}>下一页</button></>}
         <span>每 2 秒自动刷新{loading ? " · 正在读取…" : ""}</span>
       </div>
     </div>

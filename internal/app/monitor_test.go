@@ -123,6 +123,17 @@ func TestSub2APICumulativeCost(t *testing.T) {
 			} else if account.TodayCollectedAt != nil {
 				t.Fatal("unknown or previous-day consumption has a fabricated collection timestamp")
 			}
+			parts := collectionState(account)
+			if parts["balance"].Status != "ok" || parts["today"].AttemptedAt == nil {
+				t.Fatal("successful balance collection lost per-part status")
+			}
+			if test.status == 200 && hasToday {
+				if parts["today"].Status != "ok" || parts["today"].SucceededAt == nil {
+					t.Fatal("successful consumption missing per-part timestamp")
+				}
+			} else if parts["today"].Status != "failed" {
+				t.Fatal("failed consumption reported as fresh")
+			}
 			var stored Account
 			if err := a.DB.First(&stored, account.ID).Error; err != nil || jsonString(stored.TodayCollectedAt) != jsonString(account.TodayCollectedAt) {
 				t.Fatal("daily consumption timestamp was not persisted", err)

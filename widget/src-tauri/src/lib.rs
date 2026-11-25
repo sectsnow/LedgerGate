@@ -1,5 +1,7 @@
 mod credentials;
 pub mod environment;
+pub mod startup;
+pub mod updates;
 
 use reqwest::{redirect::Policy, Url};
 use serde::{Deserialize, Serialize};
@@ -30,6 +32,10 @@ pub struct ConnectionStatus {
 
 #[derive(Serialize, Deserialize)]
 pub struct WidgetAccount {
+    #[serde(default)]
+    id: Option<u64>,
+    #[serde(default)]
+    name: Option<String>,
     currency: String,
     balance: Option<f64>,
     today_used: Option<f64>,
@@ -37,6 +43,12 @@ pub struct WidgetAccount {
     status: String,
     enabled: bool,
     checked_at: Option<String>,
+    #[serde(default)]
+    today_collected_at: Option<String>,
+    #[serde(default)]
+    interval_seconds: Option<u64>,
+    #[serde(default)]
+    collection_notes: Vec<String>,
     has_warning: bool,
 }
 
@@ -269,6 +281,23 @@ mod tests {
         assert_eq!(period.trend[1].requests, 3);
         assert_eq!(period.models[0].name, "model-a");
         assert_eq!(period.channels[0].tokens, 120);
+    }
+
+    #[test]
+    fn account_collection_details_support_old_and_new_servers() {
+        let old = r#"{"currency":"USD","balance":1,"today_used":0,"today_date":"2026-11-25","status":"ok","enabled":true,"checked_at":"2026-11-25T03:00:00Z","has_warning":false}"#;
+        let mut account: WidgetAccount = serde_json::from_str(old).unwrap();
+        assert!(account.today_collected_at.is_none());
+        assert!(account.name.is_none());
+        account.id = Some(1);
+        account.name = Some("账户一".into());
+        account.today_collected_at = Some("2026-11-25T02:00:00Z".into());
+        account.collection_notes = vec!["今日消费采集提醒".into()];
+        let decoded: WidgetAccount =
+            serde_json::from_slice(&serde_json::to_vec(&account).unwrap()).unwrap();
+        assert_eq!(decoded.name.unwrap(), "账户一");
+        assert_eq!(decoded.today_collected_at.unwrap(), "2026-11-25T02:00:00Z");
+        assert_eq!(decoded.collection_notes.len(), 1);
     }
 
     #[tokio::test]

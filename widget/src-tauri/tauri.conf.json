@@ -18,6 +18,6 @@
     "active": true,
     "targets": ["nsis"],
     "icon": ["icons/icon.png", "icons/icon.ico"],
-    "windows": { "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true }, "nsis": { "languages": ["SimpChinese"], "installMode": "currentUser" } }
+    "windows": { "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true }, "nsis": { "languages": ["SimpChinese"], "installMode": "currentUser", "installerHooks": "installer-hooks.nsh" } }
   }
 }
