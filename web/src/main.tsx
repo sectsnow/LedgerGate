@@ -82,6 +82,7 @@ import ChannelModelSync from "./ChannelModelSync";
 import ChannelModelEditor, { channelModelNames } from "./ChannelModelEditor";
 import { channelModelChanges } from "./channelModels";
 import useRouteOrder from "./useRouteOrder";
+import { sortRecentModelGroups, type RecentModelUsage } from "./recentModels";
 import { GroupRoutingSummary, RouteRoutingStatus, RoutingStrategyIcon, useGroupRouting } from "./RoutingStatus";
 import { AnnouncementList, MonitorHistory } from "./MonitorActivity";
 import ThemePicker from "./ThemePicker";
@@ -2586,21 +2587,39 @@ function Models({
   const mutating = switching !== null || removing !== null || order.savingGroup !== null || deleteBusy;
   const actionsBusy = mutating || order.draggingGroup != null || deleting !== null;
   const [search, setSearch] = useState("");
-  const [vendor, setVendor] = useState("");
+  const [vendor, setVendor] = useState<string | null>("");
+  const [recentUsage, setRecentUsage] = useState<RecentModelUsage[] | null>(null);
+  const [recentError, setRecentError] = useState("");
+  useEffect(() => {
+    const controller = new AbortController();
+    api<{ items: RecentModelUsage[] }>("/request-quality?group_by=model&configured=1", "GET", undefined, controller.signal)
+      .then((result) => {
+        if (!controller.signal.aborted) { setRecentUsage(result.items || []); setRecentError(""); }
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setRecentError("最近使用统计读取失败，请稍后刷新。");
+      });
+    return () => controller.abort();
+  }, [data.groups]);
   const vendors = Array.from(new Set(data.groups.map(group => group.vendor || "其他"))).sort((a, b) => {
     if (a === "其他") return 1;
     if (b === "其他") return -1;
     return a.localeCompare(b, "zh-CN");
   });
   const query = search.trim().toLowerCase();
-  const filtered = data.groups.filter(group =>
-    (!vendor || (group.vendor || "其他") === vendor) &&
+  const recentGroups = sortRecentModelGroups(data.groups, recentUsage || []);
+  const filtered = (vendor === null ? recentGroups : data.groups).filter(group =>
+    (vendor === null || !vendor || (group.vendor || "其他") === vendor) &&
     [group.name, group.vendor, ...group.routes.map(route => route.model)].join(" ").toLowerCase().includes(query),
   );
-  const sections = vendors.map(name => ({
-    name,
-    groups: filtered.filter(group => (group.vendor || "其他") === name),
-  })).filter(section => section.groups.length > 0);
+  const sections = vendor === null
+    ? [{ key: "recent", name: "最近使用", groups: filtered, recent: true }]
+    : vendors.map(name => ({
+      key: `vendor-${name}`,
+      name,
+      groups: filtered.filter(group => (group.vendor || "其他") === name),
+      recent: false,
+    })).filter(section => section.groups.length > 0);
   const selectedGroups = data.groups.filter(group => selected.has(group.id));
   function toggleSelection(ids: number[], checked: boolean) {
     setSelected(previous => {
@@ -2652,10 +2671,12 @@ function Models({
         <span>{filtered.length} / {data.groups.length} 个模型</span>
       </div>
       {routing.error && <p className="form-error" role="alert">运行状态刷新失败，以下可能为上次结果：{routing.error}</p>}
-      <div className="vendor-filters" aria-label="模型厂商分类">
-        {["", ...vendors].map(name => (
-          <button key={name || "all"} className={vendor === name ? "selected" : ""} aria-pressed={vendor === name} onClick={() => setVendor(name)}>
-            {name || "全部"}<span>{name ? data.groups.filter(group => (group.vendor || "其他") === name).length : data.groups.length}</span>
+      <div className="vendor-filters" aria-label="模型分类">
+        <button className={vendor === "" ? "selected" : ""} aria-pressed={vendor === ""} onClick={() => setVendor("")}>全部<span>{data.groups.length}</span></button>
+        <button className={vendor === null ? "selected" : ""} aria-pressed={vendor === null} onClick={() => setVendor(null)}>最近使用<span>{recentUsage ? recentGroups.length : "—"}</span></button>
+        {vendors.map(name => (
+          <button key={name} className={vendor === name ? "selected" : ""} aria-pressed={vendor === name} onClick={() => setVendor(name)}>
+            {name}<span>{data.groups.filter(group => (group.vendor || "其他") === name).length}</span>
           </button>
         ))}
       </div>
@@ -2667,8 +2688,11 @@ function Models({
         <button className="secondary danger" disabled={actionsBusy} onClick={() => setDeleting({ groups: [...data.groups], all: true })}><Trash2 size={14} />清空全部模型（{data.groups.length}）</button>
       </div>}
       {sections.map(section => (
-        <section className="model-vendor-group" key={section.name} aria-label={`${section.name}模型`}>
+        <section className="model-vendor-group" key={section.key} aria-label={`${section.name}模型`}>
           <div className="section-heading"><h2>{section.name}</h2><span>{section.groups.length} 个模型</span></div>
+          {section.recent && <p className="field-hint">当前小时及前 23 小时，按已结束请求数排序，最多显示 5 个；包含失败和同名模型测试。</p>}
+          {section.recent && recentError && <p className="form-error" role="alert">{recentError}{recentUsage && "当前显示上次结果。"}</p>}
+          {section.recent && !section.groups.length && <p className="field-hint">{recentUsage ? "暂无符合条件的最近使用模型。" : recentError ? "暂无可用的最近使用统计。" : "正在读取最近使用统计…"}</p>}
           <div className="model-list">
       {section.groups.map((group) => {
         const usable = group.routes.some(route => (group.strategy !== "manual" || route.id === group.active_route_id) && channelEnabled(data.channels.find(row => row.channel.id === route.channel_id)));
@@ -2683,6 +2707,7 @@ function Models({
               <div>
                 <h2>{group.name}</h2>
                 <p>{strategyNames[group.strategy]} · {group.routes.length} 条路由</p>
+                {section.recent && <p>近 24 个小时段 · {recentUsage?.find(item => item.name === group.name)?.requests.toLocaleString("zh-CN")} 次请求</p>}
                 <GroupRoutingSummary group={group} runtime={routing.states[group.id]} channels={data.channels} />
                 {!usable && <span className="model-paused-state">已暂停 · 暂无可用路由</span>}
                 <ModelPrice group={group} brief />
@@ -2879,7 +2904,7 @@ function Models({
           </div>
         </section>
       ))}
-      {filtered.length === 0 && <div className="panel"><Empty icon={<SearchX size={25} aria-hidden="true" />} title="没有匹配的模型" detail="调整厂商分类或搜索名称后重试。" /></div>}
+      {filtered.length === 0 && vendor !== null && <div className="panel"><Empty icon={<SearchX size={25} aria-hidden="true" />} title="没有匹配的模型" detail="调整厂商分类或搜索名称后重试。" /></div>}
       {deleting && <Dialog title={deleting.all ? "清空全部模型" : "删除模型"} close={() => { if (!deleteBusy) setDeleting(null); }}>
         <p className="delete-description">确认删除以下 {deleting.groups.length} 个模型及其路由配置？删除后，这些模型将无法通过网关调用。</p>
         {deleting.all && <p className="form-error">清空范围包含全部模型，不受当前搜索或厂商筛选限制。</p>}

@@ -53,7 +53,8 @@ fn apply(
     )))?;
     window.set_focusable(!badge)?;
     window.set_skip_taskbar(badge)?;
-    window.set_shadow(!badge)?;
+    // 透明窗口的系统阴影会留下浅色外沿，阴影交给前端主题绘制。
+    window.set_shadow(false)?;
     window.set_size(LogicalSize::new(geometry.width, geometry.height))?;
     window.set_position(PhysicalPosition::new(geometry.x, geometry.y))?;
     window.set_resizable(!badge)?;

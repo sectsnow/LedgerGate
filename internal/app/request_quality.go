@@ -80,6 +80,14 @@ func (a *App) requestQuality(c *gin.Context) {
 			1000.0*NULLIF(SUM(output_tokens),0)/NULLIF(SUM(duration_ms),0) AS output_per_second,
             SUM(observed_requests) AS observed_requests, SUM(first_attempt_successes) AS first_attempt_successes, SUM(retried_successes) AS retried_successes, SUM(failed_requests) AS failed_requests, SUM(attempt_overhead_ms) AS attempt_overhead_ms, MAX(last_request_unix) AS last_request_unix`).
 		Group(group).Order("requests DESC").Limit(500)
+	if configured := c.Query("configured"); configured != "" {
+		if configured != "1" || group != "model" {
+			fail(c, 400, "模型范围无效")
+			return
+		}
+		query = query.Where("model IN (?)", a.DB.Model(&Group{}).Select("name")).
+			Order("last_request_unix DESC").Order("(SELECT id FROM `groups` WHERE `groups`.name = request_hours.model) ASC").Limit(5)
+	}
 	model := c.Query("model")
 	if len(model) > 200 {
 		fail(c, 400, "模型筛选过长")

@@ -12,6 +12,7 @@
   --accent-soft: #e4edff;
   --danger: #b52d3e;
   --primary: #2867da;
+  --shadow-color: rgb(30 47 72 / 18%);
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -25,12 +26,14 @@
     --accent: #8bb9ff;
     --accent-soft: #263c58;
     --danger: #ff9ca9;
+    --shadow-color: rgb(0 0 0 / 42%);
   }
 }
 .widget[data-theme="light"] {
   color-scheme: light;
   --canvas: #f5f8fd; --surface: #fff; --soft: #edf2fa; --text: #182334; --muted: #58697e;
   --border: #dce5f1; --accent: #2867da; --accent-soft: #e4edff; --danger: #b52d3e; --primary: #2867da;
+  --shadow-color: rgb(30 47 72 / 18%);
 }
 .widget[data-theme="dark"] {
   color-scheme: dark;
@@ -47,14 +50,17 @@
   --canvas: #191524; --surface: #262035; --soft: #342b46; --text: #f5efff; --muted: #bfb1d2;
   --border: #493b5e; --accent: #d3b1ff; --accent-soft: #3d3058; --danger: #ffb2bd; --primary: #7045ba;
 }
+.widget[data-theme="dark"], .widget[data-theme="emerald"], .widget[data-theme="violet"] { --shadow-color: rgb(0 0 0 / 42%); }
 * { box-sizing: border-box; }
 html, body, #root { margin: 0; width: 100%; height: 100%; }
+#root { display: flow-root; }
 body { overflow: hidden; background: transparent; color: var(--text); }
 button, input { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: default; opacity: .5; }
 button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .widget { height: 100%; display: flex; flex-direction: column; border: 1px solid var(--border); background: radial-gradient(ellipse at 100% 25%, var(--accent-soft), transparent 50%), var(--canvas); color: var(--text); }
+.widget:not(.widget-badge) { height: calc(100% - 22px); margin: 8px 10px 14px; box-shadow: 0 6px 18px var(--shadow-color); }
 .titlebar { height: 50px; min-height: 50px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px 0 17px; border-bottom: 1px solid var(--border); user-select: none; }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: calc(14px * var(--text-scale, 1)); letter-spacing: -.2px; }
 .brand img { width: 23px; height: 23px; }

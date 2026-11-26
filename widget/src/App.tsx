@@ -165,7 +165,7 @@ export default function App() {
     const fit = (current: number) => {
       if (disposed || current !== revision) return;
       const style = getComputedStyle(content);
-      const height = body.getBoundingClientRect().height + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) + root.getBoundingClientRect().height - content.getBoundingClientRect().height;
+      const height = body.getBoundingClientRect().height + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) + window.innerHeight - content.getBoundingClientRect().height;
       void display.fitHeight(height);
     };
     const observer = new ResizeObserver(() => {
